@@ -13,8 +13,13 @@ MARKET_DATA_DIR = Path(__file__).parents[1] / "market_data"
 
 _PATHS = {
     "nasdaq_1min":           MARKET_DATA_DIR / "us" / "nasdaq" / "1min",
+    "us_stock_1min":         MARKET_DATA_DIR / "us" / "stock" / "1min",
+    "us_daily":              MARKET_DATA_DIR / "us" / "daily",
+    "global_daily":          MARKET_DATA_DIR / "global" / "daily",
     "kospi200_1min":         MARKET_DATA_DIR / "kr" / "kospi200" / "1min",
+    "kr_stock_1min":         MARKET_DATA_DIR / "kr" / "stock" / "1min",
     "investor_flow_daily":   MARKET_DATA_DIR / "kr" / "investor_flow" / "daily",
+    "investor_flow_10min":   MARKET_DATA_DIR / "kr" / "investor_flow" / "10min",
     "kospi200_components":   MARKET_DATA_DIR / "metadata" / "kospi200_components",
 }
 

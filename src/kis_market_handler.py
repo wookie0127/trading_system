@@ -1,16 +1,30 @@
-"""
-Handle market using KIS
-"""
-
-from datetime import datetime, timedelta
+import json
+import os
 import time
+from pathlib import Path
 
 import httpx
-import json
-import pandas as pd
-from kis_config import API_ROOT, CODE_PATH_BOOK
+import yaml
+from dotenv import load_dotenv
+
 from kis_auth_handler import KISAuthHandler
+from kis_config import CODE_PATH_BOOK
 from loguru import logger
+
+CURRENT_DIR = Path(__file__).parent
+
+# Load environment variables from .ssh/kis
+KEY_PATH = Path.home() / ".ssh" / "kis"
+load_dotenv(KEY_PATH)
+
+# Load config from config.yaml if it exists
+CONFIG_PATH = CURRENT_DIR.parent / "config.yaml"
+if CONFIG_PATH.exists():
+    with open(CONFIG_PATH, "r") as f:
+        config = yaml.safe_load(f)
+        if config:
+            for k, v in config.items():
+                os.environ[k] = str(v)
 
 
 def read_json(json_path: str) -> list[dict]:
@@ -18,453 +32,390 @@ def read_json(json_path: str) -> list[dict]:
         return json.load(f)
 
 
-def load_codes() -> pd.DataFrame:
-    dfs = []
+def load_codes() -> list[dict]:
+    """모든 시장의 종목 코드를 취합하여 반환"""
+    all_codes = []
     for market in CODE_PATH_BOOK:
         json_path = CODE_PATH_BOOK[market]
-        df = pd.DataFrame.from_records(read_json(json_path))
-        df["marekt"] = market
-        dfs.append(df)
-    return pd.concat(dfs)
+        if Path(json_path).exists():
+            all_codes.extend(read_json(json_path))
+    return all_codes
 
 
 class MarketHandler(KISAuthHandler):
-    def __init__(self):
+    def __init__(self, exchange: str = "서울"):
         super().__init__()
         self._code_df = load_codes()
+        self.exchange = exchange
 
-    @staticmethod
-    def _format_date(value: datetime | str) -> str:
-        """Return YYYYMMDD strings from datetime or raw string inputs."""
+        # 계좌 설정 (8자리-2자리 분리)
+        cano = os.getenv("KIS_CANO", "")
+        prdt_cd = os.getenv("KIS_ACNT_PRDT_CD", "01")
 
-        if isinstance(value, str):
-            return value
-        return value.strftime("%Y%m%d")
+        if "-" in cano:
+            self.acc_no_prefix = cano.split("-")[0]
+            self.acc_no_postfix = cano.split("-")[1]
+        else:
+            self.acc_no_prefix = cano
+            self.acc_no_postfix = prdt_cd.zfill(2)
 
-    def get_code(self, company_name: str):
-        code = self._code_df[
-            (self._code_df["ko_name"] == company_name)
-            | (self._code_df["en_name"] == company_name)
-        ]
-        if code.empty:
-            logger.warning(f"No found code about {company_name}")
-            return
-        return code.iloc[0]["code"]
+    def get_code(self, company_name: str) -> str | None:
+        """종목명으로 종목 코드 찾기"""
+        for stock in self._code_df:
+            if stock.get("ko_name") == company_name or stock.get("en_name") == company_name:
+                return stock.get("code")
 
-    def inquire_domestic_stock(self, code: str):
+        logger.warning(f"No code found for company: {company_name}")
+        return None
+
+    def fetch_price(self, symbol: str) -> dict:
+        """현재가 조회 (국내/해외 통합)"""
+        if self.exchange == "서울":
+            return self.fetch_domestic_price(symbol)
+        else:
+            return self.fetch_oversea_price(symbol)
+
+    def fetch_domestic_price(self, symbol: str) -> dict:
+        """국내 주식 현재가 조회"""
         endpoint = "uapi/domestic-stock/v1/quotations/inquire-price"
-        token = self.get_valid_token()
         headers = {
             "Content-Type": "application/json",
-            "authorization": f"Bearer {token}",
+            "authorization": f"Bearer {self.get_valid_token()}",
             "appkey": self.app_key,
             "appsecret": self.app_secret,
             "tr_id": "FHKST01010100",
         }
-        params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}
-        res = httpx.get(
-            f"{API_ROOT}/{endpoint}", headers=headers, params=params, timeout=300
-        )
-        res.raise_for_status()
+        params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": symbol}
+        res = httpx.get(f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10)
         return res.json()
 
-    def _fetch_domestic_chartprice_chunk(
-        self,
-        code: str,
-        start_date: datetime | str,
-        end_date: datetime | str,
-        period_code: str = "D",
-        adjusted: bool = True,
-    ) -> list[dict]:
-        """Fetch up to 100 OHLC rows for the requested window."""
-
-        if code is None:
-            raise ValueError("`code` is required to fetch chart data.")
-
-        start_str = self._format_date(start_date)
-        end_str = self._format_date(end_date)
-
-        if start_str > end_str:
-            raise ValueError("`start_date` must be earlier than `end_date`.")
-
-        endpoint = "uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
-        token = self.get_valid_token()
+    def fetch_oversea_price(self, symbol: str) -> dict:
+        """해외 주식 현재가 조회"""
+        endpoint = "uapi/overseas-price/v1/quotations/price"
         headers = {
             "Content-Type": "application/json",
-            "authorization": f"Bearer {token}",
+            "authorization": f"Bearer {self.get_valid_token()}",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+            "tr_id": "HHDFS00000300",
+        }
+        # KIS 해외 거래소 코드 반영 (나스닥: NAS, 뉴욕: NYS)
+        excd = "NAS" if self.exchange == "나스닥" else "NYS"
+        params = {"AUTH": "", "EXCD": excd, "SYMB": symbol}
+        res = httpx.get(f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10)
+        return res.json()
+
+    def fetch_ohlcv(self, symbol: str, timeframe: str = "D", start_day: str = "", end_day: str = "", adj_price: bool = True, limit: int = 100) -> list[dict]:
+        """과거 주가 데이터 조회 (OHLCV) - 페이지네이션 지원"""
+        all_data = []
+        current_end_day = end_day if end_day else time.strftime("%Y%m%d")
+        
+        # 반복 호출로 데이터 수집 (한 번에 100개씩)
+        while len(all_data) < limit:
+            if self.exchange == "서울":
+                data = self.fetch_domestic_ohlcv(symbol, timeframe, start_day, current_end_day, adj_price)
+            else:
+                data = self.fetch_oversea_ohlcv(symbol, timeframe, start_day, current_end_day, adj_price)
+            
+            if not data:
+                break
+            
+            all_data.extend(data)
+            
+            # 더 이상 가져올 데이터가 없거나 100개 미만이면 종료
+            if len(data) < 100:
+                break
+            
+            # 다음 조회를 위해 마지막 날짜 업데이트 (가장 예전 날짜의 하루 전)
+            last_date_str = data[-1].get("stck_bsop_date") or data[-1].get("xymd")
+            if not last_date_str:
+                break
+                
+            from datetime import datetime, timedelta
+            last_dt = datetime.strptime(last_date_str, "%Y%m%d")
+            current_end_day = (last_dt - timedelta(days=1)).strftime("%Y%m%d")
+            
+            # 시작일보다 이전으로 넘어가면 종료
+            if start_day and current_end_day < start_day:
+                break
+                
+            time.sleep(0.1) # 안정적인 수집을 위한 짧은 대기
+
+        return all_data[:limit]
+
+    def fetch_domestic_ohlcv(self, symbol: str, timeframe: str = "D", start_day: str = "", end_day: str = "", adj_price: bool = True) -> list[dict]:
+        """국내 주식 일/주/월봉 조회 (단일 페이지 100건)"""
+        endpoint = "uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+        headers = {
+            "Content-Type": "application/json",
+            "authorization": f"Bearer {self.get_valid_token()}",
             "appkey": self.app_key,
             "appsecret": self.app_secret,
             "tr_id": "FHKST03010100",
         }
+        
         params = {
             "FID_COND_MRKT_DIV_CODE": "J",
-            "FID_INPUT_ISCD": code,
-            "FID_INPUT_DATE_1": start_str,
-            "FID_INPUT_DATE_2": end_str,
-            "FID_PERIOD_DIV_CODE": period_code,
-            "FID_ORG_ADJ_PRC": "0" if adjusted else "1",
+            "FID_INPUT_ISCD": symbol,
+            "FID_INPUT_DATE_1": start_day if start_day else "19900101",
+            "FID_INPUT_DATE_2": end_day if end_day else time.strftime("%Y%m%d"),
+            "FID_PERIOD_DIV_CODE": timeframe,
+            "FID_ORG_ADJ_PRC": "0" if adj_price else "1",
         }
-        res = httpx.get(
-            f"{API_ROOT}/{endpoint}", headers=headers, params=params, timeout=300
-        )
-        res.raise_for_status()
-        payload = res.json()
+        res = httpx.get(f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10)
+        return res.json().get("output2", [])
 
-        output = payload.get("output2") or []
-        if not isinstance(output, list):
-            logger.warning(
-                "Unexpected response format while fetching chart price for %s", code
-            )
-            return []
-        return output
-
-    def fetch_domestic_daily_prices(
-        self,
-        code: str,
-        min_rows: int = 250,
-        start_date: datetime | None = None,
-        end_date: datetime | None = None,
-        adjusted: bool = True,
-        chunk_span_days: int = 160,
-    ) -> pd.DataFrame:
-        """Fetch and stitch together historical daily bars for a code.
-
-        The API returns at most 100 rows per call, so we iteratively walk
-        backwards in time until we satisfy `min_rows` or reach `start_date`.
-        """
-
-        if end_date is None:
-            end_date = datetime.today()
-        if start_date is None:
-            start_date = end_date - timedelta(days=chunk_span_days * 3)
-
-        rows: list[dict] = []
-        current_end = end_date
-        start_bound = start_date
-
-        while current_end >= start_bound and len(rows) < min_rows:
-            current_start = max(
-                start_bound, current_end - timedelta(days=chunk_span_days)
-            )
-            chunk = self._fetch_domestic_chartprice_chunk(
-                code=code,
-                start_date=current_start,
-                end_date=current_end,
-                adjusted=adjusted,
-            )
-            if not chunk:
-                break
-
-            rows.extend(chunk)
-            # Prepare for the next request using the oldest date from this chunk.
-            oldest = min(
-                item["stck_bsop_date"] for item in chunk if item.get("stck_bsop_date")
-            )
-            current_end = datetime.strptime(oldest, "%Y%m%d") - timedelta(days=1)
-            if current_end < start_bound:
-                break
-
-            time.sleep(0.2)
-
-        if not rows:
-            return pd.DataFrame()
-
-        frame = pd.DataFrame(rows).drop_duplicates(subset="stck_bsop_date")
-        if "stck_bsop_date" in frame.columns:
-            frame["stck_bsop_date"] = pd.to_datetime(
-                frame["stck_bsop_date"], format="%Y%m%d"
-            )
-            frame = frame.sort_values("stck_bsop_date").reset_index(drop=True)
-
-        numeric_cols = [
-            col
-            for col in ["stck_clpr", "stck_oprc", "stck_hgpr", "stck_lwpr", "acml_vol"]
-            if col in frame.columns
-        ]
-        for col in numeric_cols:
-            frame[col] = pd.to_numeric(frame[col], errors="coerce")
-
-        return frame
-
-    def _compute_moving_averages(
-        self, df: pd.DataFrame, windows: tuple[int, ...]
-    ) -> pd.DataFrame:
-        if df.empty:
-            return df
-        close_col = "stck_clpr"
-        if close_col not in df.columns:
-            raise ValueError("Missing 'stck_clpr' column in chart data.")
-        for window in windows:
-            df[f"ma_{window}"] = df[close_col].rolling(window=window).mean()
-        return df
-
-    def scan_alignment_candidates(
-        self,
-        markets: list[str] | None = None,
-        limit: int | None = None,
-        min_rows: int = 250,
-    ) -> pd.DataFrame:
-        """Return stocks where MA224 < MA112 at the latest available date."""
-
-        if markets:
-            candidates = self._code_df[self._code_df["marekt"].isin(markets)]
-        else:
-            candidates = self._code_df
-
-        matches: list[dict] = []
-        for _, row in candidates.iterrows():
-            code = row["code"]
-            try:
-                prices = self.fetch_domestic_daily_prices(code=code, min_rows=min_rows)
-                prices = self._compute_moving_averages(prices, windows=(112, 224))
-                valid = prices.dropna(subset=["ma_112", "ma_224"])
-                if valid.empty:
-                    continue
-                latest = valid.iloc[-1]
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Skipping %s (%s): %s", code, row["ko_name"], exc)
-                continue
-
-            if latest["ma_224"] < latest["ma_112"]:
-                matches.append(
-                    {
-                        "code": code,
-                        "ko_name": row["ko_name"],
-                        "en_name": row["en_name"],
-                        "last_date": latest["stck_bsop_date"],
-                        "close": latest["stck_clpr"],
-                        "ma_112": latest["ma_112"],
-                        "ma_224": latest["ma_224"],
-                    }
-                )
-
-            if limit and len(matches) >= limit:
-                break
-
-        return pd.DataFrame(matches)
-
-    def fetch_overseas_index_daily(
-        self,
-        symbol: str,
-        start_date: datetime | str | None = None,
-        end_date: datetime | str | None = None,
-    ) -> pd.DataFrame:
-        """해외지수 일봉 조회 (S&P500, NASDAQ, SOX, VIX 등).
-
-        symbol 예시: '.SPX', '.IXIC', '.SOX', '.VIX'
-        응답 컬럼: bsop_date, clpr, oprc, hgpr, lwpr
-        """
-        if end_date is None:
-            end_date = datetime.today()
-        if start_date is None:
-            start_date = end_date - timedelta(days=365)
-
-        endpoint = "uapi/overseas-price/v1/quotations/inquire-daily-indexchartprice"
-        token = self.get_valid_token()
+    def fetch_oversea_ohlcv(self, symbol: str, timeframe: str = "D", start_day: str = "", end_day: str = "", adj_price: bool = True) -> list[dict]:
+        """해외 주식 일/주/월봉 조회 (단일 페이지 100건)"""
+        endpoint = "uapi/overseas-price/v1/quotations/dailyprice"
         headers = {
             "Content-Type": "application/json",
-            "authorization": f"Bearer {token}",
+            "authorization": f"Bearer {self.get_valid_token()}",
             "appkey": self.app_key,
             "appsecret": self.app_secret,
-            "tr_id": "FHKUP03500100",
+            "tr_id": "HHDFS76240000",
         }
+        excd = "NAS" if self.exchange == "나스닥" else "NYS"
+        
+        params = {
+            "AUTH": "",
+            "EXCD": excd,
+            "SYMB": symbol,
+            "GUBN": "0" if timeframe == "D" else ("1" if timeframe == "W" else "2"),
+            "BYMD": end_day if end_day else time.strftime("%Y%m%d"),
+            "MODP": "1" if adj_price else "0",
+        }
+        res = httpx.get(f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10)
+        return res.json().get("output2", [])
+
+    def fetch_oversea_index_ohlcv(self, symbol: str, timeframe: str = "D", start_day: str = "", end_day: str = "") -> list[dict]:
+        """해외 지수(나스닥, S&P500 등) 일/주/월봉 조회"""
+        endpoint = "uapi/overseas-price/v1/quotations/inquire-daily-chartprice"
+        headers = {
+            "Content-Type": "application/json",
+            "authorization": f"Bearer {self.get_valid_token()}",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+            "tr_id": "FHKST03030100",
+        }
+        
         params = {
             "FID_COND_MRKT_DIV_CODE": "N",
-            "FID_INPUT_ISCD": symbol,
-            "FID_INPUT_DATE_1": self._format_date(start_date),
-            "FID_INPUT_DATE_2": self._format_date(end_date),
-            "FID_PERIOD_DIV_CODE": "D",
+            "FID_INPUT_ISCD": symbol, # 예: .COMP, .SPX 등
+            "FID_INPUT_DATE_1": start_day if start_day else "20100101",
+            "FID_INPUT_DATE_2": end_day if end_day else time.strftime("%Y%m%d"),
+            "FID_PERIOD_DIV_CODE": timeframe,
         }
-        res = httpx.get(
-            f"{API_ROOT}/{endpoint}", headers=headers, params=params, timeout=300
-        )
-        res.raise_for_status()
-        payload = res.json()
+        res = httpx.get(f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10)
+        data = res.json()
+        
+        if data.get("rt_cd") != "0":
+            logger.error(f"KIS Index API Error: {data.get('msg1')} (Symbol: {symbol})")
+            
+        return data.get("output2", [])
 
-        output = payload.get("output2") or []
-        if not isinstance(output, list) or not output:
-            logger.warning("No data returned for overseas index %s", symbol)
-            return pd.DataFrame()
+    def fetch_balance(self) -> dict:
+        """전체 잔고 조회 (연속 조회 처리)"""
+        if self.exchange != "서울":
+            return {"msg1": "해외 잔고 조회는 아직 지원되지 않습니다."}
 
-        frame = pd.DataFrame(output).drop_duplicates(subset="bsop_date")
-        frame["bsop_date"] = pd.to_datetime(frame["bsop_date"], format="%Y%m%d")
-        frame = frame.sort_values("bsop_date").reset_index(drop=True)
-        for col in ["clpr", "oprc", "hgpr", "lwpr"]:
-            if col in frame.columns:
-                frame[col] = pd.to_numeric(frame[col], errors="coerce")
-        return frame
+        output = {"output1": [], "output2": []}
+        fk100, nk100 = "", ""
 
-    def fetch_domestic_index_daily(
-        self,
-        symbol: str,
-        start_date: datetime | str | None = None,
-        end_date: datetime | str | None = None,
-    ) -> pd.DataFrame:
-        """국내지수 일봉 조회 (KOSPI, KOSDAQ 등).
+        for _ in range(5):  # 최대 5페이지 혹은 재시도
+            data = self._fetch_balance_step(fk100, nk100)
 
-        symbol 예시: '0001' = KOSPI, '1001' = KOSDAQ
-        응답 컬럼: bsop_date, bstp_nmix_oprc, bstp_nmix_clpr, bstp_nmix_hgpr, bstp_nmix_lwpr
-        """
-        if end_date is None:
-            end_date = datetime.today()
-        if start_date is None:
-            start_date = end_date - timedelta(days=365)
+            # KIS 특유의 '조회이후 자료변경' 에러(rt_cd='7') 대응: 잠시 후 재시도
+            if data.get("rt_cd") == "7":
+                logger.warning("KIS API: 자료 변경됨. 0.5초 후 재시도...")
+                time.sleep(0.5)
+                continue
 
-        endpoint = "uapi/domestic-stock/v1/quotations/inquire-daily-indexchartprice"
-        token = self.get_valid_token()
+            if data.get("rt_cd") != "0":
+                return data
+
+            output["output1"].extend(data.get("output1", []))
+            # output2는 리스트 타입으로 유지 (보통 [ {요약정보} ] 형태)
+            if isinstance(data.get("output2"), list):
+                output["output2"] = data.get("output2", [])
+            elif isinstance(data.get("output2"), dict):
+                output["output2"] = [data.get("output2", {})]
+
+            # 연속 조회 키 업데이트
+            if data.get("tr_cont") in ["M", "D"]:
+                fk100 = data.get("ctx_area_fk100", "")
+                nk100 = data.get("ctx_area_nk100", "")
+                time.sleep(0.2) # API 과부하 방지
+            else:
+                break
+        return output
+
+    def fetch_intraday_candles(self, symbol: str, timeframe: str = "1", end_time: str = "") -> list[dict]:
+        """분봉 데이터 조회 (국내/해외 통합)"""
+        if self.exchange == "서울":
+            return self.fetch_domestic_intraday(symbol, timeframe, end_time)
+        else:
+            return self.fetch_oversea_intraday(symbol, timeframe, end_time)
+
+    def fetch_domestic_intraday(self, symbol: str, timeframe: str = "1", end_time: str = "") -> list[dict]:
+        """국내 주식 당일 분봉 조회 (1분, 3분, 5분 등)"""
+        endpoint = "uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
         headers = {
             "Content-Type": "application/json",
-            "authorization": f"Bearer {token}",
+            "authorization": f"Bearer {self.get_valid_token()}",
             "appkey": self.app_key,
             "appsecret": self.app_secret,
-            "tr_id": "FHKUP03500100",
+            "tr_id": "FHKST03010200",
         }
         params = {
-            "FID_COND_MRKT_DIV_CODE": "U",
+            "FID_COND_MRKT_DIV_CODE": "J",
             "FID_INPUT_ISCD": symbol,
-            "FID_INPUT_DATE_1": self._format_date(start_date),
-            "FID_INPUT_DATE_2": self._format_date(end_date),
-            "FID_PERIOD_DIV_CODE": "D",
+            "FID_INPUT_HOUR_1": end_time,
+            "FID_ETC_CLS_CODE": "",
+            "FID_PW_DATA_INCU_YN": "Y",
         }
-        res = httpx.get(
-            f"{API_ROOT}/{endpoint}", headers=headers, params=params, timeout=300
-        )
-        res.raise_for_status()
-        payload = res.json()
+        res = httpx.get(f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10)
+        return res.json().get("output2", [])
 
-        output = payload.get("output2") or []
-        if not isinstance(output, list) or not output:
-            logger.warning("No data returned for domestic index %s", symbol)
-            return pd.DataFrame()
-
-        frame = pd.DataFrame(output).drop_duplicates(subset="bsop_date")
-        frame["bsop_date"] = pd.to_datetime(frame["bsop_date"], format="%Y%m%d")
-        frame = frame.sort_values("bsop_date").reset_index(drop=True)
-        for col in ["bstp_nmix_oprc", "bstp_nmix_clpr", "bstp_nmix_hgpr", "bstp_nmix_lwpr", "acml_vol"]:
-            if col in frame.columns:
-                frame[col] = pd.to_numeric(frame[col], errors="coerce")
-        return frame
-
-    def fetch_investor_flow(self, code: str) -> dict:
-        """종목별 당일 투자자(외국인/기관/개인) 매매동향 조회.
-
-        TR: FHKST01010900
-        당일 데이터만 반환. 기간 조회는 수집 스크립트에서 날짜를 순회하여 호출.
-        """
-        endpoint = "uapi/domestic-stock/v1/quotations/inquire-investor"
-        token = self.get_valid_token()
+    def fetch_oversea_intraday(self, symbol: str, timeframe: str = "1", end_time: str = "") -> list[dict]:
+        """해외 주식 당일 분봉 조회"""
+        endpoint = "uapi/overseas-stock/v1/quotations/inquire-time-itemchartprice"
         headers = {
             "Content-Type": "application/json",
-            "authorization": f"Bearer {token}",
+            "authorization": f"Bearer {self.get_valid_token()}",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+            "tr_id": "HHDFS76950200",
+        }
+        excd = "NAS" if self.exchange == "나스닥" else "NYS"
+        params = {
+            "AUTH": "",
+            "EXCD": excd,
+            "SYMB": symbol,
+            "TM": end_time,
+        }
+        res = httpx.get(f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10)
+        return res.json().get("output2", [])
+
+    def fetch_investor_flow(self, symbol: str, end_time: str = "") -> list[dict]:
+        """국내 주식 시간별 투자자 매매동향 조회 (10분 단위)"""
+        endpoint = "uapi/domestic-stock/v1/quotations/inquire-investor"
+        headers = {
+            "Content-Type": "application/json",
+            "authorization": f"Bearer {self.get_valid_token()}",
             "appkey": self.app_key,
             "appsecret": self.app_secret,
             "tr_id": "FHKST01010900",
         }
         params = {
             "FID_COND_MRKT_DIV_CODE": "J",
-            "FID_INPUT_ISCD": code,
+            "FID_INPUT_ISCD": symbol,
         }
-        res = httpx.get(
-            f"{API_ROOT}/{endpoint}", headers=headers, params=params, timeout=300
-        )
-        res.raise_for_status()
-        return res.json()
+        res = httpx.get(f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10)
+        return res.json().get("output", [])
 
-    def fetch_fx_rate_daily(
-        self,
-        fx_code: str,
-        start_date: datetime | str | None = None,
-        end_date: datetime | str | None = None,
-    ) -> pd.DataFrame:
-        """환율 일봉 조회.
-
-        fx_code 예시: 'FX@KRW' (USD/KRW)
-        응답 컬럼: bsop_date, clpr, oprc, hgpr, lwpr
-        ※ KIS API 환율 심볼/마켓코드는 실계좌 환경에서 테스트 필요.
-        """
-        if end_date is None:
-            end_date = datetime.today()
-        if start_date is None:
-            start_date = end_date - timedelta(days=365)
-
-        endpoint = "uapi/overseas-price/v1/quotations/inquire-daily-itemchartprice"
-        token = self.get_valid_token()
+    def _fetch_balance_step(self, fk100: str = "", nk100: str = "") -> dict:
+        """국내 잔고 또는 미체결 조회"""
+        endpoint = "uapi/domestic-stock/v1/trading/inquire-balance"
+        tr_id = "VTTC8434R" if self.is_simulation else "TTTC8434R"
         headers = {
             "Content-Type": "application/json",
-            "authorization": f"Bearer {token}",
+            "authorization": f"Bearer {self.get_valid_token()}",
             "appkey": self.app_key,
             "appsecret": self.app_secret,
-            "tr_id": "HHDFS76240000",
+            "tr_id": tr_id,
         }
         params = {
-            "AUTH": "",
-            "EXCD": "FX",
-            "SYMB": fx_code,
-            "GUBN": "0",
-            "BYMD": self._format_date(end_date),
-            "MODP": "0",
+            "CANO": self.acc_no_prefix,
+            "ACNT_PRDT_CD": self.acc_no_postfix,
+            "AFHR_FLG": "N",
+            "OFL_YN": "N",
+            "INQR_DVSN": "01",
+            "UNPR_DVSN": "01",
+            "FUND_STTL_ICLD_YN": "N",
+            "FNCG_AMT_AUTO_RDPT_YN": "N",
+            "PRCS_DVSN": "01", # 가공 처리된 잔고
+            "CTX_AREA_FK100": fk100,
+            "CTX_AREA_NK100": nk100,
         }
-        res = httpx.get(
-            f"{API_ROOT}/{endpoint}", headers=headers, params=params, timeout=300
-        )
-        res.raise_for_status()
-        payload = res.json()
+        res = httpx.get(f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10)
+        data = res.json()
+        data["tr_cont"] = res.headers.get("tr_cont", "")
+        return data
 
-        output = payload.get("output2") or []
-        if not isinstance(output, list) or not output:
-            logger.warning("No FX data returned for %s", fx_code)
-            return pd.DataFrame()
+    def create_market_buy_order(self, symbol: str, quantity: int) -> dict:
+        """시장가 매수 주문"""
+        return self._create_domestic_order(symbol, quantity, 0, "03", "buy")
 
-        frame = pd.DataFrame(output).drop_duplicates(subset="xymd")
-        frame["xymd"] = pd.to_datetime(frame["xymd"], format="%Y%m%d")
-        frame = frame.rename(columns={"xymd": "bsop_date"})
-        frame = frame.sort_values("bsop_date").reset_index(drop=True)
-        for col in ["clos", "open", "high", "low"]:
-            if col in frame.columns:
-                frame[col] = pd.to_numeric(frame[col], errors="coerce")
-        return frame
+    def create_market_sell_order(self, symbol: str, quantity: int) -> dict:
+        """시장가 매도 주문"""
+        return self._create_domestic_order(symbol, quantity, 0, "03", "sell")
 
-    def inquire_oversee_stock(self, code: str):
-        endpoint = "uapi/overseas-price/v1/quotations/price"
-        token = self.get_valid_token()
-        headers_overseas = {
-            "Content-Type": "application/json; charset=utf-8",
-            "authorization": f"Bearer {token}",
+    def _create_domestic_order(self, symbol: str, quantity: int, price: int, order_type: str, side: str) -> dict:
+        endpoint = "uapi/domestic-stock/v1/trading/order-cash"
+        if side == "buy":
+            tr_id = "VTTC0802U" if self.is_simulation else "TTTC0802U"
+        else:
+            tr_id = "VTTC0801U" if self.is_simulation else "TTTC0801U"
+
+        headers = {
+            "Content-Type": "application/json",
+            "authorization": f"Bearer {self.get_valid_token()}",
             "appkey": self.app_key,
             "appsecret": self.app_secret,
-            "tr_id": "HHDFS00000300",  # 해외주식 현재가조회 TR
+            "tr_id": tr_id,
         }
-        params_overseas = {"AUTH": "", "EXCD": "NAS", "SYMB": code}
-        res = httpx.get(
-            f"{API_ROOT}/{endpoint}",
-            headers=headers_overseas,
-            params=params_overseas,
-            timeout=300,
-        )
-        res.raise_for_status()
+        body = {
+            "CANO": self.acc_no_prefix,
+            "ACNT_PRDT_CD": self.acc_no_postfix,
+            "PDNO": symbol,
+            "ORD_DVSN": order_type,
+            "ORD_QTY": str(quantity),
+            "ORD_UNPR": str(price),
+        }
+        res = httpx.post(f"{self.base_url}/{endpoint}", headers=headers, json=body, timeout=10)
         return res.json()
+
+    # --- 하위 호환성 유지를 위한 Alias 메서드 ---
+    def get_balance(self):
+        return self.fetch_balance()
+
+    def order_domestic_stock(self, code: str, quantity: int, price: int = 0, order_type: str = "01", side: str = "buy"):
+        return self._create_domestic_order(code, quantity, price, order_type, side)
+
+    def inquire_domestic_stock(self, code: str):
+        return self.fetch_domestic_price(code)
+
+    def inquire_oversee_stock(self, code: str):
+        return self.fetch_oversea_price(code)
 
 
 if __name__ == "__main__":
-    print("Start")
-    market_handler = MarketHandler()
-    print("ready marekt handler")
-    # 국내주식 테스트
-    company_name = "삼성전자"
-    code = market_handler.get_code(company_name=company_name)
-    price = market_handler.inquire_domestic_stock(code=code)
-    print(f"=== {company_name} ===")
-    print(price)
-    # 해외주식 테스트
-    code = "AAPL"
-    price = market_handler.inquire_oversee_stock(code=code)
-    print(f"=== {code} ===")
-    print(price)
+    import pprint
+    handler = MarketHandler()
 
-    # 간단한 112/224선 정렬 조건 스캐너 예시
-    candidates = market_handler.scan_alignment_candidates(markets=["kospi"], limit=5)
-    print("=== MA Alignment Candidates ===")
-    if not candidates.empty:
-        print(candidates[["code", "ko_name", "last_date", "close", "ma_112", "ma_224"]])
-    else:
-        print("No matches found with the current constraints.")
+    # 현재가 테스트
+    print("=== 삼성전자 현재가 ===")
+    price_info = handler.fetch_price("005930")
+    pprint.pprint(price_info)
+
+    # 잔고 테스트
+    print("\n=== 나의 전체 잔고 ===")
+    balance_info = handler.fetch_balance()
+    pprint.pprint(balance_info)
+
+    # 해외주식 테스트
+    print(f"\n=== AAPL (나스닥) 현재가 ===")
+    handler_oversea = MarketHandler(exchange="나스닥")
+    pprint.pprint(handler_oversea.fetch_price("AAPL"))
+
+    # OHLCV 데이터 조회 테스트
+    print("\n=== 삼성전자 최근 10일 일봉 ===")
+    ohlcv = handler.fetch_ohlcv("005930", timeframe="D")
+    for day in ohlcv[:10]:
+        print(f"날짜: {day.get('stck_bsop_date')}, 종가: {day.get('stck_clpr')}, 변동: {day.get('prdy_vrss')}")
+
+    print("\n=== TSLA 최근 10일 일봉 ===")
+    tsla_ohlcv = handler_oversea.fetch_ohlcv("TSLA", timeframe="D")
+    for day in tsla_ohlcv[:10]:
+        print(f"날짜: {day.get('xymd')}, 종가: {day.get('clos')}, 변동: {day.get('diff')}")

@@ -1,6 +1,9 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from kis_market_handler import MarketHandler
+import os
 
 app = FastAPI()
+market_handler = MarketHandler()
 
 
 @app.get("/")
@@ -10,13 +13,47 @@ def read_root():
 
 @app.post("/buy/{symbol}/{quantity}")
 def buy_stock(symbol: str, quantity: int):
-    # 여기에 매수 로직을 구현합니다.
-    # 예를 들어, 주문을 실행하고 성공 여부를 반환할 수 있습니다.
-    return {"message": f"Bought {quantity} shares of {symbol}"}
+    # Try to get code if symbol is a name
+    code = market_handler.get_code(symbol) or symbol
+    try:
+        res = market_handler.order_domestic_stock(code=code, quantity=quantity, side="buy", order_type="03")
+        if res.get("rt_cd") == "0":
+            return {"message": f"Bought {quantity} shares of {symbol}", "data": res}
+        else:
+            raise HTTPException(status_code=400, detail=res.get("msg1"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/sell/{symbol}/{quantity}")
 def sell_stock(symbol: str, quantity: int):
-    # 여기에 매도 로직을 구현합니다.
-    # 예를 들어, 주문을 실행하고 성공 여부를 반환할 수 있습니다.
-    return {"message": f"Sold {quantity} shares of {symbol}"}
+    code = market_handler.get_code(symbol) or symbol
+    try:
+        res = market_handler.order_domestic_stock(code=code, quantity=quantity, side="sell", order_type="03")
+        if res.get("rt_cd") == "0":
+            return {"message": f"Sold {quantity} shares of {symbol}", "data": res}
+        else:
+            raise HTTPException(status_code=400, detail=res.get("msg1"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/balance")
+def get_balance():
+    try:
+        return market_handler.get_balance()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/health")
+def health_check():
+    """시스템 및 KIS API 상태 체크"""
+    try:
+        token = market_handler.get_valid_token()
+        return {
+            "status": "healthy",
+            "kis_auth": "connected" if token else "disconnected",
+            "cano_set": bool(os.getenv("KIS_CANO"))
+        }
+    except Exception as e:
+        return {"status": "unhealthy", "error": str(e)}
