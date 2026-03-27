@@ -24,6 +24,7 @@ KIS API 없이 yfinance만으로 수집 가능한 데이터:
 
   # 개별 스텝
   uv run python src/yahoo_finance_collector.py --step us_indices
+  uv run python src/yahoo_finance_collector.py --step us_daily --start 2010-01-01
   uv run python src/yahoo_finance_collector.py --step kospi200_intraday
   uv run python src/yahoo_finance_collector.py --step kospi200_daily --start 2020-01-01
 """
@@ -52,14 +53,39 @@ US_INDICES: dict[str, str] = {
     "^GSPC": "nasdaq_1min",   # S&P 500
 }
 
+# 수집 대상 US 일봉 (지수, ETF 등)
+US_DAILY_SYMBOLS: list[str] = [
+    "^IXIC",  # NASDAQ Composite
+    "^NDX",   # NASDAQ 100
+    "^GSPC",  # S&P 500
+    "QQQ",    # Invesco QQQ Trust
+]
+
+# 글로벌 자산 (환율, 원자재, 변동성, 암호화폐)
+GLOBAL_ASSETS: dict[str, str] = {
+    "USDKRW=X": "fx_usdkrw",    # 원/달러 환율
+    "JPYKRW=X": "fx_jpykrw",    # 원/엔 환율 (100엔 기준 환산 필요할 수 있음)
+    "DX-Y.NYB": "dollar_index", # 달러 지수
+    "CL=F":     "wti_crude",    # WTI 원유 선물
+    "GC=F":     "gold_price",   # 금 선물
+    "^VIX":     "vix_index",    # VIX (변동성 지수)
+    "BTC-USD":  "crypto_btc",   # 비트코인
+    "ETH-USD":  "crypto_eth",   # 이더리움
+}
+
 # yfinance 1분봉 제약
 _MAX_DAYS_PER_CHUNK = 7
 
 # 배치 다운로드 최대 종목 수 (너무 많으면 yfinance가 타임아웃)
 _BATCH_SIZE = 50
 
-# KOSPI200 일봉 저장 경로 (parquet_writer에 없는 별도 경로)
-_KOSPI200_DAILY_DIR = MARKET_DATA_DIR / "kr" / "kospi200" / "daily"
+_PARQUET_WRITER_PATHS: dict[str, Path] = {
+    "nasdaq_1min":           MARKET_DATA_DIR / "us" / "nasdaq" / "1min",
+    "us_daily":              MARKET_DATA_DIR / "us" / "daily",
+    "global_daily":          MARKET_DATA_DIR / "global" / "daily",
+    "kospi200_1min":         MARKET_DATA_DIR / "kr" / "kospi200" / "1min",
+    "kospi200_daily_yf":     MARKET_DATA_DIR / "kr" / "kospi200" / "daily",
+}
 
 
 # ──────────────────────────────────────────────
@@ -281,6 +307,100 @@ async def collect_us_indices(
 
 
 # ──────────────────────────────────────────────
+# US 일봉 (장기 히스토리 백필)
+# ──────────────────────────────────────────────
+
+async def collect_us_daily(
+    start: date,
+    end: date | None = None,
+    symbols: list[str] | None = None,
+) -> None:
+    """
+    US 지수 및 ETF 일봉 수집 (장기 히스토리 백필용).
+    저장 경로: market_data/us/daily/<YYYY-MM-DD>.parquet
+
+    Args:
+        start:   수집 시작일
+        end:     수집 종료일 (기본: 오늘)
+        symbols: 쉼표 구분 심볼 목록. (기본: US_DAILY_SYMBOLS)
+    """
+    if end is None:
+        end = date.today()
+    if symbols is None:
+        symbols = list(US_DAILY_SYMBOLS)
+
+    logger.info(f"US 일봉 (Yahoo) {start} → {end}: {len(symbols)}개 종목")
+
+    for i, batch in enumerate(_batches(symbols, _BATCH_SIZE), 1):
+        logger.debug(f"  배치 {i}: {len(batch)}개 종목")
+
+        df = await asyncio.to_thread(_download_daily, batch, start, end)
+        if df.empty:
+            logger.warning(f"  배치 {i}: 데이터 없음")
+            continue
+
+        df = validate_intraday(df)
+        if df.empty:
+            continue
+
+        # 날짜별로 분할 저장
+        df["_date"] = pd.to_datetime(df["timestamp"]).dt.date
+        for day, group in df.groupby("_date"):
+            dest = daily_path("us_daily", str(day))
+            write_parquet(group.drop(columns=["_date"]).reset_index(drop=True), dest)
+
+        await asyncio.sleep(1.0)
+
+    logger.success("US 일봉 저장 완료")
+
+
+# ──────────────────────────────────────────────
+# 글로벌 자산 일봉 (장기 히스토리 백필)
+# ──────────────────────────────────────────────
+
+async def collect_global_assets(
+    start: date,
+    end: date | None = None,
+    symbols: list[str] | None = None,
+) -> None:
+    """
+    글로벌 자산(환율, 원자재, 암호화폐 등) 일봉 수집.
+    저장 경로: market_data/global/daily/<YYYY-MM-DD>.parquet
+
+    Args:
+        start:   수집 시작일
+        end:     수집 종료일 (기본: 오늘)
+        symbols: 심볼 목록 (기본: GLOBAL_ASSETS)
+    """
+    if end is None:
+        end = date.today()
+    if symbols is None:
+        symbols = list(GLOBAL_ASSETS)
+
+    logger.info(f"글로벌 자산 (Yahoo) {start} → {end}: {len(symbols)}개 종목")
+
+    for i, batch in enumerate(_batches(symbols, _BATCH_SIZE), 1):
+        df = await asyncio.to_thread(_download_daily, batch, start, end)
+        if df.empty:
+            logger.warning(f"  배치 {i}: 데이터 없음")
+            continue
+
+        df = validate_intraday(df)
+        if df.empty:
+            continue
+
+        # 날짜별 분할 저장
+        df["_date"] = pd.to_datetime(df["timestamp"]).dt.date
+        for day, group in df.groupby("_date"):
+            dest = daily_path("global_daily", str(day))
+            write_parquet(group.drop(columns=["_date"]).reset_index(drop=True), dest)
+
+        await asyncio.sleep(1.0)
+
+    logger.success("글로벌 자산 저장 완료")
+
+
+# ──────────────────────────────────────────────
 # KOSPI200 1분봉 수집
 # ──────────────────────────────────────────────
 
@@ -427,7 +547,13 @@ async def collect_all_yahoo(trade_date: date | None = None) -> None:
     logger.info("1/2 — US 지수 1분봉")
     await collect_us_indices(start=trade_date, end=trade_date)
 
-    logger.info("2/2 — KOSPI200 1분봉")
+    logger.info("2/4 — US 일봉")
+    await collect_us_daily(start=trade_date, end=trade_date)
+
+    logger.info("3/4 — 글로벌 자산 (FX/원자재/코인)")
+    await collect_global_assets(start=trade_date, end=trade_date)
+
+    logger.info("4/4 — KOSPI200 1분봉")
     await collect_kospi200_intraday(trade_date=trade_date)
 
     logger.success("=== Yahoo Finance 수집 완료 ===")
@@ -446,6 +572,8 @@ if __name__ == "__main__":
         epilog="""
 스텝 목록:
   us_indices        US 지수 1분봉 (^IXIC, ^NDX, ^GSPC)
+  us_daily          US 지수 및 ETF 일봉 (장기 히스토리, --start 필수)
+  global_daily      글로벌 자산(FX/원자재/코인) 일봉 (장기 히스토리, --start 필수)
   kospi200_intraday KOSPI200 종목 1분봉
   kospi200_daily    KOSPI200 종목 일봉 (장기 히스토리, --start 필수)
 
@@ -453,6 +581,8 @@ if __name__ == "__main__":
   python yahoo_finance_collector.py
   python yahoo_finance_collector.py --date 2025-03-07
   python yahoo_finance_collector.py --step kospi200_daily --start 2020-01-01
+  python yahoo_finance_collector.py --step us_daily --start 2010-01-01
+  python yahoo_finance_collector.py --step global_daily --start 2010-01-01
   python yahoo_finance_collector.py --step us_indices --symbols '^IXIC,^GSPC'
         """,
     )
@@ -461,7 +591,7 @@ if __name__ == "__main__":
     parser.add_argument("--end", default=None, help="종료 날짜 YYYY-MM-DD")
     parser.add_argument(
         "--step",
-        choices=["us_indices", "kospi200_intraday", "kospi200_daily"],
+        choices=["us_indices", "us_daily", "global_daily", "kospi200_intraday", "kospi200_daily"],
         default=None,
         help="단일 스텝 실행",
     )
@@ -485,11 +615,21 @@ if __name__ == "__main__":
                 end=_end,
             )
         )
+    elif args.step == "us_daily":
+        if _start is None:
+            parser.error("--step us_daily 는 --start 날짜가 필요합니다.")
+        assert _start is not None
+        asyncio.run(collect_us_daily(start=_start, end=_end, symbols=_symbols))
+    elif args.step == "global_daily":
+        if _start is None:
+            parser.error("--step global_daily 는 --start 날짜가 필요합니다.")
+        assert _start is not None
+        asyncio.run(collect_global_assets(start=_start, end=_end, symbols=_symbols))
     elif args.step == "kospi200_intraday":
         asyncio.run(collect_kospi200_intraday(trade_date=_trade_date))
     elif args.step == "kospi200_daily":
         if _start is None:
             parser.error("--step kospi200_daily 는 --start 날짜가 필요합니다.")
-        asyncio.run(collect_kospi200_daily(start=_start, end=_end))
+        asyncio.run(collect_kospi200_daily(start=_start, end=_end, codes=_symbols))
     else:
         asyncio.run(collect_all_yahoo(trade_date=_trade_date))
