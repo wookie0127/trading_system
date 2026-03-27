@@ -1,0 +1,32 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+.python-version
+
+# System files
+.DS_Store
+
+# Project specific ignores
+config.yaml
+access_token.json
+token.dat
+trading_data.db
+data/
+market_data/
+output/
+notebook/
+reference/
+
+# Tool specific
+.agent/
+
+# Temporary/Debug
+hello.py
+tests/data/
