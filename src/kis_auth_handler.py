@@ -12,21 +12,29 @@ import httpx
 from dotenv import load_dotenv
 from loguru import logger
 
-from kis_config import URL_TOKEN
-
-KEY_PATH = Path.home() / ".ssh" / "kis"
-load_dotenv(KEY_PATH)
 CURRENT_DIR = Path(__file__).parent
 
 
 class KISAuthHandler:
     def __init__(self):
-        # Load environment variables from .ssh/kis
-        KEY_PATH = Path.home() / ".ssh" / "kis"
-        load_dotenv(KEY_PATH)
-
+        # 1. First, check if already in environment (e.g., from Docker/Compose)
         self.app_key = os.getenv("KIS_APP_KEY")
         self.app_secret = os.getenv("KIS_APP_SECRET")
+        
+        # 2. If not, try loading from ~/.ssh/kis (legacy local setup)
+        if not self.app_key or not self.app_secret:
+            KEY_PATH = Path.home() / ".ssh" / "kis"
+            if KEY_PATH.exists():
+                load_dotenv(KEY_PATH)
+                self.app_key = os.getenv("KIS_APP_KEY")
+                self.app_secret = os.getenv("KIS_APP_SECRET")
+        
+        # 3. Fallback to standard .env in current directory
+        if not self.app_key or not self.app_secret:
+            load_dotenv()
+            self.app_key = os.getenv("KIS_APP_KEY")
+            self.app_secret = os.getenv("KIS_APP_SECRET")
+
         self.is_simulation = os.getenv("KIS_SIMULATION", "false").lower() == "true"
         
         if self.is_simulation:

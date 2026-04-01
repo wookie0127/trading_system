@@ -18,7 +18,7 @@ from loguru import logger
 from kis_auth_handler import KISAuthHandler
 from kis_config import API_ROOT
 from kospi200_component_collector import load_components, collect_kospi200_components
-from parquet_writer import daily_path, write_parquet
+from parquet_writer import daily_path, write_parquet, get_last_sync_stats
 
 
 _ENDPOINT = "uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
@@ -103,11 +103,17 @@ async def run_sync_all(target_date: str | None = None) -> tuple[int, int]:
         await collect_kospi200_components(run_date)
         symbols = load_components(run_date)
 
+    last_sync_stats = get_last_sync_stats(dest)
     success_count = 0
     total_count = len(symbols)
     
     async with httpx.AsyncClient(timeout=30) as client:
         for symbol in symbols:
+            # 이미 수집된 최신 데이터가 있다면 (1분 내외) 스킵
+            last_ts = last_sync_stats.get(symbol)
+            if last_ts and (datetime.now() - last_ts).total_seconds() < 60:
+                continue
+
             # Sync symbol logic for specific date
             df = await sync_symbol(client, auth, symbol)
             if not df.empty:

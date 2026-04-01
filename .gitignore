@@ -18,6 +18,7 @@ config.yaml
 access_token.json
 token.dat
 trading_data.db
+data
 data/
 market_data/
 output/
@@ -30,3 +31,5 @@ reference/
 # Temporary/Debug
 hello.py
 tests/data/
+
+data/

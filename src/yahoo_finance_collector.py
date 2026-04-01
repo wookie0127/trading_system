@@ -87,6 +87,9 @@ _PARQUET_WRITER_PATHS: dict[str, Path] = {
     "kospi200_daily_yf":     MARKET_DATA_DIR / "kr" / "kospi200" / "daily",
 }
 
+# KOSPI200 일봉 저장 경로
+_KOSPI200_DAILY_DIR = MARKET_DATA_DIR / "kr" / "kospi200" / "daily"
+
 
 # ──────────────────────────────────────────────
 # 헬퍼
@@ -525,7 +528,7 @@ async def collect_kospi200_daily(
         # 날짜별로 분할 저장
         df["_date"] = pd.to_datetime(df["timestamp"]).dt.date
         for day, group in df.groupby("_date"):
-            dest = _KOSPI200_DAILY_DIR / f"{day}.parquet"
+            dest = daily_path("kospi200_daily_yf", str(day))
             write_parquet(group.drop(columns=["_date"]).reset_index(drop=True), dest)
 
         await asyncio.sleep(1.0)

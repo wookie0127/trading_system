@@ -27,7 +27,8 @@ from parquet_writer import daily_path, write_parquet
 SYMBOLS_LIMIT = 200  # Number of stocks to backfill (e.g. KOSPI 200)
 PAGES_LIMIT = 100    # KIS limit for backward pagination (approx 30*100 = 3000 rows)
 DELAY_RANGE = (0.2, 0.5)
-JSON_CODE_PATH = Path("data/kospi_code_list.json")
+CURRENT_DIR = Path(__file__).parent
+JSON_CODE_PATH = CURRENT_DIR.parent / "data" / "kospi_code_list.json"
 
 
 def load_stock_symbols() -> list[str]:
@@ -35,17 +36,17 @@ def load_stock_symbols() -> list[str]:
     if not JSON_CODE_PATH.exists():
         logger.error(f"Symbols file missing: {JSON_CODE_PATH}")
         return []
-        
+
     with open(JSON_CODE_PATH, "r", encoding="utf-8") as f:
         data = json.load(f)
-    
+
     # Filter for valid 6-digit numeric codes
     symbols = []
     for item in data:
         code = item.get("code", "")
         if len(code) == 6 and code.isdigit():
             symbols.append(code)
-    
+
     # Sort for deterministic processing
     return sorted(list(set(symbols)))
 
@@ -54,15 +55,15 @@ def parse_output(raw_rows: list[dict], symbol: str) -> pd.DataFrame:
     records = []
     # KIS returns today's date context? No, it usually has 'stck_bsop_date' or just uses today.
     # Actually, the chart API output2 doesn't always have a date field?
-    # Wait, stck_cntg_hour is HHMMSS. 
+    # Wait, stck_cntg_hour is HHMMSS.
     # Chart API FHKST03010200 output2 rows have stck_bsop_date (business date).
-    
+
     for row in raw_rows:
         date_str = row.get("stck_bsop_date")
         time_str = row.get("stck_cntg_hour")
         if not date_str or not time_str:
             continue
-            
+
         try:
             ts = datetime.strptime(f"{date_str} {time_str}", "%Y%m%d %H%M%S")
         except ValueError:
@@ -83,7 +84,7 @@ def parse_output(raw_rows: list[dict], symbol: str) -> pd.DataFrame:
 async def backfill_symbol(handler: MarketHandler, symbol: str) -> None:
     """Paginate backward for a single symbol and save day-wise."""
     logger.info(f"Backfilling {symbol} ...")
-    
+
     cursor_time = "" # Empty for latest
     page_count = 0
     all_data = []
@@ -92,18 +93,18 @@ async def backfill_symbol(handler: MarketHandler, symbol: str) -> None:
         rows = handler.fetch_domestic_intraday(symbol, end_time=cursor_time)
         if not rows:
             break
-            
+
         df = parse_output(rows, symbol)
         if df.empty:
             break
-            
+
         all_data.append(df)
         page_count += 1
-        
+
         # Move cursor to 1 minute before the oldest in this batch
         oldest = df["timestamp"].min()
         cursor_time = (oldest - timedelta(minutes=1)).strftime("%H%M%S")
-        
+
         # Small delay between pages
         await asyncio.sleep(random.uniform(0.1, 0.2))
 
@@ -111,7 +112,7 @@ async def backfill_symbol(handler: MarketHandler, symbol: str) -> None:
         return
 
     combined = pd.concat(all_data).drop_duplicates(subset=["timestamp", "symbol"])
-    
+
     # Save day-wise as per original convention
     for date_obj, group in combined.groupby(combined["timestamp"].dt.date):
         dest = daily_path("kospi200_1min", str(date_obj))
@@ -124,10 +125,10 @@ async def main():
     symbols = load_stock_symbols()
     # Limit to e.g. top 200 for now
     target_symbols = symbols[:SYMBOLS_LIMIT]
-    
+
     logger.info(f"Targeting {len(target_symbols)} symbols for backfill.")
     handler = MarketHandler(exchange="서울")
-    
+
     for i, symbol in enumerate(target_symbols, 1):
         try:
             await backfill_symbol(handler, symbol)
@@ -135,7 +136,7 @@ async def main():
             await asyncio.sleep(random.uniform(*DELAY_RANGE))
         except Exception as e:
             logger.error(f"Error backfilling {symbol}: {e}")
-            
+
     logger.success("Backfill process finished.")
 
 

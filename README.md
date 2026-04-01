@@ -1,6 +1,16 @@
-# Trading System
+# Trading System (Docker Ready 🐳)
 
-한국투자증권(KIS) Open API를 활용한 시장 데이터 수집 시스템.
+한국투자증권(KIS) Open API를 활용한 시장 데이터 수집 및 API 서버 시스템입니다.
+Docker Compose를 통해 누구나 쉽고 빠르게 개발 환경을 구축할 수 있도록 설계되었습니다.
+
+---
+
+## 🚀 빠른 시작 (Docker)
+
+```bash
+cp .env.example .env   # API 키 입력 필요
+docker compose up -d --build
+```
 
 ---
 
@@ -32,20 +42,43 @@ src/
 
 ## 환경 설정
 
-KIS API 키를 `~/.ssh/kis` 파일에 저장:
+### 1. API 키 설정
+아래 두 가지 방법 중 하나를 선택하여 KIS API 키를 설정합니다.
 
-```
-KIS_APP_KEY=your_app_key
-KIS_APP_SECRET=your_app_secret
-```
+- **Docker/추천**: 프로젝트 루트에 `.env` 파일을 생성하고 내용을 채웁니다. (참고: `.env.example`)
+  ```bash
+  cp .env.example .env
+  # .env 파일을 열어 KIS_APP_KEY, KIS_APP_SECRET 등을 수정
+  ```
+- **로컬 레거시**: `~/.ssh/kis` 파일에 직접 저장합니다.
+  ```
+  KIS_APP_KEY=your_app_key
+  KIS_APP_SECRET=your_app_secret
+  ```
 
 ---
 
-## 실행
+## 실행 방법
 
+### 1. Docker Compose (추천)
+모든 서비스(API 서버 + 데이터 수집 데몬)를 컨테이너로 실행합니다.
 ```bash
-cd src
-python market_context_collector.py
+docker compose up -d --build
+```
+- **API 서버**: `http://localhost:8000`
+- **수집 데몬**: 백그라운드에서 실시간 데이터 수집 (로그는 `logs/` 폴더에서 확인 가능)
+
+### 2. 로컬 실행
+의존성 설치 후 직접 스크립트를 실행합니다.
+```bash
+# 의존성 설치 (uv 사용 시)
+uv sync
+
+# 데이터 수집 실행
+python src/market_context_collector.py
+
+# API 서버 실행
+PYTHONPATH=src uvicorn api:app --reload
 ```
 
 ---
