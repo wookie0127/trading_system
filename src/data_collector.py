@@ -31,6 +31,22 @@ class DataCollector:
                 PRIMARY KEY (symbol, date)
             )
         """)
+
+        # 네이버 종목 토론방 게시물 테이블 생성
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS stock_board_posts (
+                nid INTEGER PRIMARY KEY,
+                symbol TEXT,
+                company_name TEXT,
+                date TEXT,
+                title TEXT,
+                author TEXT,
+                views INTEGER,
+                likes INTEGER,
+                dislikes INTEGER,
+                url TEXT
+            )
+        """)
         conn.commit()
         conn.close()
         logger.info(f"Database initialized at {self.db_path}")
@@ -135,6 +151,40 @@ class DataCollector:
             logger.success(f"Saved {len(records)} records to database.")
         except Exception as e:
             logger.error(f"Failed to save to DB: {e}")
+        finally:
+            conn.close()
+
+    def save_board_posts(self, records: list):
+        """종목 토론방 게시물 DB 저장 (중복 시 무시)"""
+        if not records:
+            return
+            
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        try:
+            cursor.executemany("""
+                INSERT OR IGNORE INTO stock_board_posts 
+                (nid, symbol, company_name, date, title, author, views, likes, dislikes, url)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, records)
+            conn.commit()
+            logger.success(f"Saved {len(records)} board posts to database.")
+        except Exception as e:
+            logger.error(f"Failed to save board posts to DB: {e}")
+        finally:
+            conn.close()
+
+    def get_last_board_nid(self, symbol: str) -> int:
+        """특정 종목의 가장 최근 게시물 ID 조회"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT MAX(nid) FROM stock_board_posts WHERE symbol = ?", (symbol,))
+            res = cursor.fetchone()
+            return res[0] if res and res[0] else 0
+        except Exception as e:
+            logger.error(f"Failed to get last nid: {e}")
+            return 0
         finally:
             conn.close()
 
