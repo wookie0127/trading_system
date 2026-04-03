@@ -83,6 +83,122 @@ PYTHONPATH=src uvicorn api:app --reload
 
 ---
 
+## 📈 KOSPI 200 데이터 파이프라인
+
+### 파이프라인 구성
+
+| 스크립트 | 용도 | 데이터 소스 |
+|---|---|---|
+| `src/daily_intraday_orchestrator.py` | 매일 장 마감 후 KOSPI 200 전 종목 1분봉 수집 | KIS API |
+| `src/backfill_orchestrator.py` | 특정 종목의 일봉(5년) + 1분봉(30일) 소급 수집 | KIS API + Yahoo Finance |
+| `src/intraday_backfill_stock.py` | 단일 종목 1분봉 N일 소급 수집 | Yahoo Finance |
+| `src/collect_daily_stock.py` | 단일 종목 일봉 N일 수집 | KIS API |
+
+수집된 데이터는 `data/market_data/kr/` 이하에 Parquet 형식으로 저장됩니다.
+
+```
+data/market_data/kr/
+├── stock/
+│   ├── daily/          # 종목별 일봉 (e.g. 005930.parquet)
+│   └── 1min/           # 날짜별 1분봉 (e.g. 2026-04-03.parquet)
+└── kospi200/
+    ├── 1min/           # 날짜별 KOSPI200 전 종목 1분봉
+    └── components/     # KOSPI200 구성종목 목록
+```
+
+---
+
+### 🔔 알림 설정 (Slack / Discord)
+
+수집 파이프라인은 시작·완료·오류 시 Slack과 Discord로 동시에 알림을 전송합니다.
+`config.yaml` 또는 `~/.ssh/kis`에 아래 환경변수를 추가하세요.
+
+```yaml
+# Slack
+SLACK_BOT_TOKEN: xoxb-...
+SLACK_CHANNEL_ID: C0XXXXXX
+
+# Discord - 봇 토큰 방식 (추천)
+DISCORD_TOKEN: your-discord-bot-token
+DISCORD_CHANNEL_ID: your-channel-id-number
+
+# Discord - 웹훅 방식 (선택)
+# DISCORD_WEBHOOK_URL: https://discord.com/api/webhooks/...
+```
+
+> **Discord 채널 ID 확인**: 디스코드 → 설정 → 고급 → 개발자 모드 ON → 채널 우클릭 → "채널 ID 복사"
+
+---
+
+### ▶️ 수동 실행
+
+```bash
+# 특정 종목 소급 수집 (일봉 5년 + 1분봉 30일)
+uv run src/backfill_orchestrator.py --symbol 005930
+uv run src/backfill_orchestrator.py --symbol 005930 --years 10 --days 30
+
+# 오늘 KOSPI 200 전 종목 1분봉 수집 (1회 실행)
+uv run src/daily_intraday_orchestrator.py
+```
+
+---
+
+### ⏰ Prefect를 이용한 매일 자동 수집
+
+#### 1단계: Prefect 서버 실행
+
+Prefect 스케줄러가 동작하려면 Prefect 서버 또는 Worker가 실행되어야 합니다.
+
+```bash
+# 로컬 Prefect 서버 실행 (백그라운드)
+uv run prefect server start
+```
+
+#### 2단계: Worker 실행
+
+별도 터미널에서 작업을 처리할 Worker를 실행합니다.
+
+```bash
+uv run prefect worker start --pool "default-agent-pool"
+```
+
+#### 3단계: 스케줄 배포
+
+매일 오후 4시(KST, 월~금)에 KOSPI 200 데이터를 자동 수집하도록 배포합니다.
+
+```bash
+uv run prefect deploy src/daily_intraday_orchestrator.py:daily_intraday_flow \
+  --name "KOSPI-Intraday-Daily" \
+  --cron "0 16 * * 1-5" \
+  --timezone "Asia/Seoul" \
+  --pool "default-agent-pool"
+```
+
+#### 배포 확인
+
+```bash
+# 배포 목록 확인
+uv run prefect deployment ls
+
+# 수동으로 즉시 실행 (테스트용)
+uv run prefect deployment run 'Daily-KOSPI200-Intraday-Flow/KOSPI-Intraday-Daily'
+```
+
+#### Docker 환경에서 자동화
+
+`docker-compose.yml`에 Prefect Worker 서비스를 추가하면 컨테이너 기반으로 스케줄을 운영할 수 있습니다.
+
+```yaml
+prefect-worker:
+  build: .
+  command: uv run prefect worker start --pool "default-agent-pool"
+  env_file: .env
+  volumes:
+    - ./data:/app/data
+```
+
+---
+
 ## 테스트
 
 ### 검증 필요 항목

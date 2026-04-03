@@ -44,6 +44,7 @@ async def daily_intraday_flow(target_date: date | None = None):
         return
 
     notifier = Notifier()
+    await notifier.notify_all(f"🚀 *[Market Data]* {run_date} KOSPI 200 구성종목 및 1분봉 수집을 시작합니다.")
     try:
         await fetch_components_task(run_date)
         await collect_intraday_task(run_date)
