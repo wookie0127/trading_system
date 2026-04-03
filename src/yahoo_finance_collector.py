@@ -138,40 +138,32 @@ def _download_1min(
 
     frames: list[pd.DataFrame] = []
 
-    if len(symbols) == 1:
-        # 단일 종목: MultiIndex 없음
-        df = raw.reset_index()
-        df = df.rename(columns={
+    frames: list[pd.DataFrame] = []
+ 
+    # yfinance returns MultiIndex if group_by="ticker"
+    for sym in symbols:
+        try:
+            # Check if slice exists
+            if sym not in raw.columns.levels[0]:
+                continue
+            sub = raw[sym].copy()
+        except (KeyError, AttributeError):
+            logger.warning(f"  {sym}: 데이터 없음")
+            continue
+        if sub.empty:
+            continue
+        sub = sub.reset_index()
+        sub = sub.rename(columns={
             "Datetime": "timestamp",
+            "Date": "timestamp",
             "Open": "open",
             "High": "high",
             "Low": "low",
             "Close": "close",
             "Volume": "volume",
         })
-        df["symbol"] = symbols[0]
-        frames.append(df[["timestamp", "symbol", "open", "high", "low", "close", "volume"]])
-    else:
-        # 복수 종목: (Price, Ticker) MultiIndex columns
-        for sym in symbols:
-            try:
-                sub = raw[sym].copy()
-            except KeyError:
-                logger.warning(f"  {sym}: 데이터 없음 (상장폐지 또는 심볼 오류)")
-                continue
-            if sub.empty:
-                continue
-            sub = sub.reset_index()
-            sub = sub.rename(columns={
-                "Datetime": "timestamp",
-                "Open": "open",
-                "High": "high",
-                "Low": "low",
-                "Close": "close",
-                "Volume": "volume",
-            })
-            sub["symbol"] = sym
-            frames.append(sub[["timestamp", "symbol", "open", "high", "low", "close", "volume"]])
+        sub["symbol"] = sym
+        frames.append(sub[["timestamp", "symbol", "open", "high", "low", "close", "volume"]])
 
     if not frames:
         return pd.DataFrame()

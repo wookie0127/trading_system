@@ -6,11 +6,12 @@ from kis_market_handler import MarketHandler
 from loguru import logger
 from dotenv import load_dotenv
 from pathlib import Path
+from datetime import datetime
 
 import yaml
 from functools import wraps
 
-CURRENT_DIR = Path(__file__).parent
+CURRENT_DIR = Path(__file__).resolve().parent
 
 # Load environment variables
 KEY_PATH = Path.home() / ".ssh" / "kis"
@@ -61,7 +62,84 @@ def handle_help(message, say, logger):
     msg += "• `!buy <종목명> <수량>` : 지정한 종목을 시장가로 매수합니다.\n"
     msg += "• `!sell <종목명> <수량>` : 지정한 종목을 시장가로 매도합니다.\n"
     msg += "• `!balance` : 현재 계좌 잔고 및 보유 종목을 조회합니다.\n"
-    msg += "• `!help` : 이 도움말을 표시합니다."
+    msg += "• `!help` : 이 도움말을 표시합니다.\n"
+    msg += "• `!status` : 데이터 수집 현황을 확인합니다.\n"
+    msg += "• `!backfill <회사명>` : 해당 종목의 과거 1분봉(최근 30일)을 백필합니다."
+    say(msg)
+ 
+@app.message(re.compile(r"^!backfill\s+(.+)$"))
+@log_execution
+def handle_backfill_message(message, say, context, logger):
+    try:
+        stock_name = context['matches'][0].strip()
+        code = market_handler.get_code(stock_name)
+        
+        if not code:
+            say(f"❌ '{stock_name}'에 해당하는 종목 코드를 찾을 수 없습니다.")
+            return
+            
+        say(f"♻️ {stock_name}({code})의 과거 30일 1분봉 백필을 시작합니다. (이미 수집된 날짜는 건너뜁니다)")
+        
+        from intraday_backfill_stock import backfill_stock_intraday
+        # Run async function in background or wait
+        import asyncio
+        results = asyncio.run(backfill_stock_intraday(code, days=30))
+        
+        msg = f"📊 *{stock_name} 백필 결과*\n"
+        msg += f"• 성공: {results['success']}일\n"
+        msg += f"• 건너뜀 (이미 존재): {results['skipped']}일\n"
+        if results['failed'] > 0:
+            msg += f"• 실패: {results['failed']}일\n"
+        
+        if results['success'] > 0:
+            msg += f"• 수집된 날짜: {', '.join(results['dates'][-5:])}"
+            if len(results['dates']) > 5: msg += " 등"
+            
+        say(msg)
+        
+    except Exception as e:
+        logger.error(f"Error in backfill command: {e}")
+        say("❌ 백필 처리 중 오류가 발생했습니다.")
+ 
+@app.message("!status")
+@log_execution
+def handle_status_message(message, say, logger):
+    """주요 데이터 카테고리의 마지막 수집 시점 확인"""
+    from parquet_writer import _PATHS
+    import glob
+    
+    msg = "🔍 *데이터 수집 현황*\n\n"
+    
+    categories = {
+        "KOSPI 200 (1분)": "kospi200_1min",
+        "KOSPI 200 (성분)": "kospi200_components",
+        "투자자 매매동향": "investor_flow_daily",
+        "NASDAQ (1분)": "nasdaq_1min",
+        "국내 주식 (일봉)": "kr_stock_daily"
+    }
+    
+    for label, key in categories.items():
+        base_dir = _PATHS.get(key)
+        if not base_dir or not base_dir.exists():
+            msg += f"• {label}: ❌ 데이터 경로 없음\n"
+            continue
+            
+        # Recursive search for .parquet files
+        files = glob.glob(str(base_dir / "**" / "*.parquet"), recursive=True)
+        if not files:
+            msg += f"• {label}: ❌ 수집된 데이터 없음\n"
+            continue
+            
+        # Find the most recently modified file (by OS mtime) or by filename date
+        latest_file = Path(max(files, key=os.path.getmtime))
+        mtime = datetime.fromtimestamp(latest_file.stat().st_mtime)
+        
+        # Also extract date from filename if possible (YYYY-MM-DD.parquet)
+        basename = latest_file.stem
+        
+        msg += f"• {label}: ✅ 최신 수집 ({basename})\n"
+        msg += f"  └ 마지막 배치: _{mtime.strftime('%Y-%m-%d %H:%M')}_\n"
+ 
     say(msg)
 
 @app.message(re.compile(r"^!buy\s+(.+)\s+(\d+)$"))

@@ -67,6 +67,18 @@ def get_last_sync_stats(dest: Path) -> dict[str, pd.Timestamp]:
         return {}
 
 
+def is_symbol_in_data(dest: Path, symbol: str) -> bool:
+    """지정된 파일(dest)에 해당 종목(symbol) 데이터가 이미 존재하는지 확인합니다."""
+    if not dest.exists():
+        return False
+    try:
+        # symbol 컬럼만 읽어서 존재 여부 확인 (효율적)
+        df = pd.read_parquet(dest, columns=["symbol"])
+        return symbol in df["symbol"].unique()
+    except Exception:
+        return False
+
+
 def daily_path(key: str, date_str: str) -> Path:
     """Return path like <key_dir>/<date_str>.parquet (date_str: YYYY-MM-DD)."""
     return get_dir(key) / f"{date_str}.parquet"

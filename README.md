@@ -134,6 +134,11 @@ print(df.tail(3))
   - 심볼 `FX@KRW` → `USDKRW` 변경 시도
   - TR ID `HHDFS76240000` → KIS API 문서에서 환율 전용 TR 재확인
 - **국내지수 컬럼명 다름**: `bstp_nmix_clpr` 대신 실제 응답의 `output2` 키 목록 출력 후 `kis_market_handler.py` 내 numeric 변환 컬럼 목록 수정
+- **메신저 봇 (Slack / Discord)**:
+   - Slack: `python src/slack_handler.py`
+   - Discord: `python src/discord_handler.py` (DISCORD_TOKEN 설정 필요)
+
+## 상세 가이드 (Local)
 
 ### 응답 컬럼 기준
 
