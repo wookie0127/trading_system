@@ -30,6 +30,8 @@ dependencies = [
     "uvicorn>=0.30.0",
     "httpx>=0.27.0",
     "yfinance>=0.2.66",
+    "discord-py>=2.4.0",
+    "beautifulsoup4>=4.12.0",
 ]
 
 [dependency-groups]
