@@ -75,7 +75,13 @@ async def fetch_kospi200_components(target_date: date | None = None) -> pd.DataF
         "csvxls_isNo": "false",
     }
 
-    async with httpx.AsyncClient(headers=_HEADERS, timeout=30) as client:
+    # KRX requires a valid session cookie obtained by visiting the referer page first
+    referer_url = "http://data.krx.co.kr/contents/MDC/MDI/mdiLoader/index.cmd?menuId=MDC0201020506"
+
+    async with httpx.AsyncClient(headers=_HEADERS, timeout=30, follow_redirects=True) as client:
+        # Step 1: Establish session by visiting the referer page
+        await client.get(referer_url)
+        # Step 2: POST the actual data request with the session cookie
         resp = await client.post(_KRX_JSON_URL, data=payload)
         resp.raise_for_status()
         raw = resp.json()

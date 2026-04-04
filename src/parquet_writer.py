@@ -23,6 +23,7 @@ _PATHS = {
     "investor_flow_10min":   MARKET_DATA_DIR / "kr" / "investor_flow" / "10min",
     "kospi200_daily_yf":     MARKET_DATA_DIR / "kr" / "kospi200" / "daily",
     "kospi200_components":   MARKET_DATA_DIR / "metadata" / "kospi200_components",
+    "us_stock_daily":        MARKET_DATA_DIR / "us" / "stock" / "daily",
 }
 
 

@@ -1,15 +1,15 @@
 import asyncio
-import os
 from datetime import datetime
 from loguru import logger
 import fire
 import sys
+from pathlib import Path
 
 # 프로젝트 루트(src)를 path에 추가하여 절대 임포트 가능하게 함
-current_dir = os.path.dirname(os.path.abspath(__file__))
-src_dir = os.path.dirname(os.path.dirname(current_dir))
+current_dir = Path(__file__).resolve().parent
+src_dir = current_dir.parents[1]
 if src_dir not in sys.path:
-    sys.path.append(src_dir)
+    sys.path.append(str(src_dir))
 
 # 이제 src를 기준으로 임포트 (src 아래에 있으므로 절대 경로 지원)
 try:

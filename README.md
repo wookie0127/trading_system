@@ -101,9 +101,28 @@ data/market_data/kr/
 ├── stock/
 │   ├── daily/          # 종목별 일봉 (e.g. 005930.parquet)
 │   └── 1min/           # 날짜별 1분봉 (e.g. 2026-04-03.parquet)
-└── kospi200/
     ├── 1min/           # 날짜별 KOSPI200 전 종목 1분봉
     └── components/     # KOSPI200 구성종목 목록
+```
+
+---
+
+## 💬 커뮤니티 데이터 (네이버 종목 토론방)
+
+네이버 증권 종목 토론방의 실시간 게시물 데이터를 수집하여 여론의 흐름을 파악합니다.
+
+### 동작 방식
+- **증분 수집 (Incremental)**: 데이터베이스(`trading_data.db`)에 이미 저장된 최신 게시물 번호(nid)를 파악해, 새로운 글만 중복 없이 가져옵니다.
+- **이중화 스크래핑**: `httpx`를 이용한 고속 수집(Plan A)을 기본으로 하며, 차단될 경우 `playwright`를 통해 브라우저 기반(Plan B)으로 로드합니다.
+- **인코딩 처리**: 네이버 증권의 EUC-KR / UTF-8 동적 인코딩을 자동 감지하여 안정적으로 한글을 수집합니다.
+- **DB 저장 및 알림**: 수집한 데이터는 SQLite `stock_board_posts` 테이블에 영구 저장되며, 실행 직후 Slack과 Discord로 📈 요약 리포트(신규 건수 및 인기글)를 발송합니다.
+
+### ▶️ 수동 실행
+
+```bash
+# 특정 종목 대상 수집 (예: SK하이닉스, 삼성전자)
+# 기본적으로 5페이지까지 탐색하며, 기존 DB 데이터와 만나면 자동 중단됩니다.
+uv run python3 src/collectors/naver_board/collector.py --symbols 000660,005930 --max_pages 5
 ```
 
 ---
@@ -171,6 +190,12 @@ uv run prefect deploy src/daily_intraday_orchestrator.py:daily_intraday_flow \
   --name "KOSPI-Intraday-Daily" \
   --cron "0 16 * * 1-5" \
   --timezone "Asia/Seoul" \
+  --pool "default-agent-pool"
+
+# 네이버 종목 토론방 수집 (매 4시간마다)
+uv run prefect deploy src/collectors/naver_board/orchestrator.py:naver_board_flow \
+  --name "Naver-Board-Sync" \
+  --cron "0 */4 * * *" \
   --pool "default-agent-pool"
 ```
 

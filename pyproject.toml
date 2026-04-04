@@ -32,6 +32,8 @@ dependencies = [
     "yfinance>=0.2.66",
     "discord-py>=2.4.0",
     "beautifulsoup4>=4.12.0",
+    "pykrx>=1.2.4",
+    "finance-datareader>=0.9.110",
 ]
 
 [dependency-groups]

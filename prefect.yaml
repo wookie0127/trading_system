@@ -1,0 +1,46 @@
+---
+# Welcome to your prefect.yaml file! You can use this file for
+# storing and managing configuration for deploying your flows.
+# We recommend committing this file to source control along
+# with your flow code.
+
+# Generic metadata about this project
+name: trading_system
+prefect-version: 3.6.24
+
+# build section allows you to manage and build docker images
+build: null
+
+# push section allows you to manage if and how this project
+# is uploaded to remote locations
+push: null
+
+# pull section allows you to provide instructions for cloning
+# this project in remote locations
+pull:
+- prefect.deployments.steps.git_clone:
+    repository: https://github.com/wookie0127/trading_system.git
+    branch: main
+    access_token: '{{ prefect.blocks.secret.deployment-naver-board-sync-naver-board-collection-flow-repo-token
+      }}'
+
+# the deployments section allows you to provide configuration
+# for deploying flows
+deployments:
+- name: Naver-Board-Sync
+  version: null
+  tags: []
+  concurrency_limit: null
+  description: "\uB124\uC774\uBC84 \uC885\uBAA9 \uD1A0\uB860\uBC29 \uC218\uC9D1 \uC624\
+    \uCF00\uC2A4\uD2B8\uB808\uC774\uC158 \uD50C\uB85C\uC6B0\n\uC8FC\uAE30: 4\uC2DC\
+    \uAC04 (0 */4 * * *)"
+  entrypoint: src/collectors/naver_board/orchestrator.py:naver_board_flow
+  parameters: {}
+  work_pool:
+    name: default-agent-pool
+    work_queue_name: null
+    job_variables: {}
+  schedules:
+  - cron: 0 */4 * * *
+    timezone: null
+    day_or: true

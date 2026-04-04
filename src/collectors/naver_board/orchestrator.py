@@ -1,15 +1,13 @@
 import asyncio
-import os
-from datetime import datetime
 from pathlib import Path
 from prefect import flow, task, get_run_logger
-from loguru import logger as loguru_logger
 
 # 프로젝트 루트(src)를 path에 추가하여 절대 임포트 가능하게 함
 import sys
-current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.append(current_dir)
+current_dir = Path(__file__).resolve().parent
+src_dir = current_dir.parents[1]
+if str(src_dir) not in sys.path:
+    sys.path.append(str(src_dir))
 
 from collectors.naver_board.collector import NaverBoardCollector
 from notifier import Notifier
@@ -58,6 +56,6 @@ async def naver_board_flow(symbols: str = DEFAULT_SYMBOLS, max_pages: int = MAX_
         raise e
 
 if __name__ == "__main__":
-    # 로컬 실행: python src/naver_board_orchestrator.py
-    # 배포: prefect deploy src/naver_board_orchestrator.py --name "Naver-Board-Sync" --interval 14400 (4시간)
+    # 로컬 실행: python src/collectors/naver_board/orchestrator.py
+    # 배포: prefect deploy src/collectors/naver_board/orchestrator.py --name "Naver-Board-Sync" --interval 14400 (4시간)
     asyncio.run(naver_board_flow())
