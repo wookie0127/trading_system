@@ -120,8 +120,11 @@ data/market_data/kr/
 ### ▶️ 수동 실행
 
 ```bash
-# 특정 종목 대상 수집 (예: SK하이닉스, 삼성전자)
+# KOSPI200 전체 대상 수집
 # 기본적으로 5페이지까지 탐색하며, 기존 DB 데이터와 만나면 자동 중단됩니다.
+uv run python3 src/collectors/naver_board/collector.py --symbols kospi200 --max_pages 5
+
+# 특정 종목만 직접 지정할 수도 있습니다.
 uv run python3 src/collectors/naver_board/collector.py --symbols 000660,005930 --max_pages 5
 ```
 

@@ -10,24 +10,26 @@ if str(src_dir) not in sys.path:
     sys.path.append(str(src_dir))
 
 from collectors.naver_board.collector import NaverBoardCollector
+from collectors.naver_board.collector import resolve_symbols
 from notifier import Notifier
 
 # --- Configuration ---
-DEFAULT_SYMBOLS = "000660,005930" # SK Hynix, Samsung Electronics
+DEFAULT_SYMBOLS = "kospi200"
 MAX_PAGES = 5
 
 @task(name="Fetch Symbols")
 def fetch_symbols_task(symbols: str = DEFAULT_SYMBOLS):
     """수집 대상 종목 리스트 결정 (향후 KOSPI 200 등으로 확장 가능)"""
     logger = get_run_logger()
-    logger.info(f"Target symbols: {symbols}")
-    return symbols
+    resolved = resolve_symbols(symbols)
+    logger.info(f"Target symbols resolved: {len(resolved)}")
+    return resolved
 
 @task(name="Collect Naver Board", retries=2, retry_delay_seconds=60)
-async def collect_board_task(symbols: str, max_pages: int):
+async def collect_board_task(symbols: list[str], max_pages: int):
     """네이버 종목 토론방 수집 실행"""
     logger = get_run_logger()
-    logger.info(f"Starting collection for {symbols} (max_pages={max_pages})")
+    logger.info(f"Starting collection for {len(symbols)} symbols (max_pages={max_pages})")
     
     collector = NaverBoardCollector()
     # collector.run() 자체가 내부에서 알림을 보내지만, 

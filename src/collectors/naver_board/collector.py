@@ -4,6 +4,7 @@ from loguru import logger
 import fire
 import sys
 from pathlib import Path
+from typing import Iterable
 
 # 프로젝트 루트(src)를 path에 추가하여 절대 임포트 가능하게 함
 current_dir = Path(__file__).resolve().parent
@@ -16,11 +17,35 @@ try:
     from collectors.naver_board.scraper import NaverBoardScraper
     from data_collector import DataCollector
     from notifier import Notifier
+    from kospi200_symbols_sync import get_symbol_list
 except ImportError:
     # 로컬 실행 시 예외 처리
     from scraper import NaverBoardScraper
     from data_collector import DataCollector
     from notifier import Notifier
+    from kospi200_symbols_sync import get_symbol_list
+
+
+DEFAULT_SYMBOLS = "kospi200"
+MAX_CONCURRENCY = 8
+MAX_REPORT_LINES = 12
+
+
+def resolve_symbols(symbols: str | Iterable[str] = DEFAULT_SYMBOLS) -> list[str]:
+    """문자열/리스트 입력을 실제 종목코드 리스트로 변환한다."""
+    if isinstance(symbols, str):
+        normalized = symbols.strip()
+        if not normalized or normalized.lower() == "kospi200":
+            kospi200 = get_symbol_list()
+            if not kospi200:
+                raise ValueError("KOSPI200 symbol list is empty. Run kospi200_symbols_sync first.")
+            return kospi200
+        return [s.strip() for s in normalized.split(",") if s.strip()]
+
+    resolved = [str(s).strip() for s in symbols if str(s).strip()]
+    if not resolved:
+        raise ValueError("No symbols resolved for board collection.")
+    return resolved
 
 class NaverBoardCollector:
     def __init__(self, db_path: str = "trading_data.db"):
@@ -102,35 +127,58 @@ class NaverBoardCollector:
             "best_post": best_post
         }
 
-    async def run(self, symbols: str = "000660,005930", max_pages: int = 5):
+    async def run(
+        self,
+        symbols: str | Iterable[str] = DEFAULT_SYMBOLS,
+        max_pages: int = 5,
+        max_concurrency: int = MAX_CONCURRENCY,
+    ):
         """여러 종목에 대해 병렬 수집 실행"""
-        symbol_list = [s.strip() for s in symbols.split(",")]
-        logger.info(f"Starting parallel collection for: {symbol_list}")
-        
-        tasks = [self.collect_symbol(s, max_pages) for s in symbol_list]
+        symbol_list = resolve_symbols(symbols)
+        logger.info(
+            f"Starting board collection for {len(symbol_list)} symbols "
+            f"(max_pages={max_pages}, max_concurrency={max_concurrency})"
+        )
+
+        semaphore = asyncio.Semaphore(max_concurrency)
+
+        async def collect_with_limit(symbol: str):
+            async with semaphore:
+                return await self.collect_symbol(symbol, max_pages)
+
+        tasks = [collect_with_limit(symbol) for symbol in symbol_list]
         results = await asyncio.gather(*tasks)
         
         # 알림 요약 생성
         total_new = sum(r["count"] for r in results)
         if total_new > 0:
+            nonzero_results = [r for r in results if r["count"] > 0]
+            ranked_results = sorted(nonzero_results, key=lambda x: x["count"], reverse=True)
+            display_results = ranked_results[:MAX_REPORT_LINES]
+
             msg = "📊 *네이버 종목 토론방 수집 리포트*\n"
             msg += f"• 일시: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-            msg += f"• 총 신규 게시물: {total_new}건\n\n"
-            
-            for r in results:
+            msg += f"• 총 신규 게시물: {total_new}건\n"
+            msg += f"• 신규 발생 종목 수: {len(nonzero_results)}개\n\n"
+
+            for r in display_results:
                 msg += f"✅ *{r['company_name']}*({r['symbol']}): {r['count']}건\n"
                 if r["best_post"] and r["best_post"]["likes"] > 0:
                     best = r["best_post"]
                     msg += f"  └ 🔥 *인기글*: {best['title'][:30]}... (👍{best['likes']})\n"
-            
+
+            omitted = len(nonzero_results) - len(display_results)
+            if omitted > 0:
+                msg += f"\n• 그 외 {omitted}개 종목은 요약에서 생략됨"
+
             await self.notifier.notify_all(msg)
             logger.info("Sent summary report to Slack/Discord.")
         else:
             logger.info("No new posts collected. Skipping notification.")
 
-def main(symbols: str = "000660,005930", max_pages: int = 5):
+def main(symbols: str = DEFAULT_SYMBOLS, max_pages: int = 5, max_concurrency: int = MAX_CONCURRENCY):
     collector = NaverBoardCollector()
-    asyncio.run(collector.run(symbols, max_pages))
+    asyncio.run(collector.run(symbols, max_pages, max_concurrency))
 
 if __name__ == "__main__":
     fire.Fire(main)
