@@ -1,6 +1,62 @@
-version: '3.8'
-
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: prefect-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: prefect
+      POSTGRES_USER: prefect
+      POSTGRES_PASSWORD: prefect
+    ports:
+      - "5432:5432"
+    volumes:
+      - prefect-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prefect -d prefect"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  prefect-server:
+    build: .
+    container_name: prefect-server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://prefect:prefect@postgres:5432/prefect
+      PREFECT_SERVER_API_HOST: 0.0.0.0
+    ports:
+      - "4200:4200"
+    command: prefect server start --host 0.0.0.0
+    working_dir: /app
+
+  prefect-worker:
+    build: .
+    container_name: prefect-worker
+    restart: unless-stopped
+    depends_on:
+      prefect-server:
+        condition: service_started
+    environment:
+      PREFECT_API_URL: http://prefect-server:4200/api
+      PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://prefect:prefect@postgres:5432/prefect
+      PYTHONPATH: /app/src
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./trading_data.db:/app/trading_data.db
+      - ./src:/app/src
+      - ./config.yaml:/app/config.yaml:ro
+      - ./prefect.yaml:/app/prefect.yaml:ro
+      - ./README.md:/app/README.md:ro
+    command: prefect worker start --pool "default-agent-pool"
+    working_dir: /app
+
   api:
     build: .
     container_name: trading-api
@@ -10,7 +66,8 @@ services:
     environment:
       - PYTHONPATH=/app/src
     env_file:
-      - .env
+      - path: .env
+        required: false
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
@@ -24,7 +81,8 @@ services:
     environment:
       - PYTHONPATH=/app/src
     env_file:
-      - .env
+      - path: .env
+        required: false
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
@@ -32,5 +90,4 @@ services:
     working_dir: /app/src
 
 volumes:
-  data:
-  logs:
+  prefect-postgres-data:

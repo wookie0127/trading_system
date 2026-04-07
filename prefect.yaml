@@ -17,12 +17,7 @@ push: null
 
 # pull section allows you to provide instructions for cloning
 # this project in remote locations
-pull:
-- prefect.deployments.steps.git_clone:
-    repository: https://github.com/wookie0127/trading_system.git
-    branch: main
-    access_token: '{{ prefect.blocks.secret.deployment-naver-board-sync-naver-board-collection-flow-repo-token
-      }}'
+pull: []
 
 # the deployments section allows you to provide configuration
 # for deploying flows
@@ -41,6 +36,6 @@ deployments:
     work_queue_name: null
     job_variables: {}
   schedules:
-  - cron: 0 */4 * * *
-    timezone: null
+  - cron: 0 */12 * * *
+    timezone: Asia/Seoul
     day_or: true

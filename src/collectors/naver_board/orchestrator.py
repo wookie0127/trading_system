@@ -39,7 +39,7 @@ async def collect_board_task(symbols: str, max_pages: int):
 async def naver_board_flow(symbols: str = DEFAULT_SYMBOLS, max_pages: int = MAX_PAGES):
     """
     네이버 종목 토론방 수집 오케스트레이션 플로우
-    주기: 4시간 (0 */4 * * *)
+    주기: 하루 2회, 12시간 간격 (0 */12 * * *)
     """
     logger = get_run_logger()
     logger.info("Starting Naver Board Collection Flow...")
@@ -57,5 +57,5 @@ async def naver_board_flow(symbols: str = DEFAULT_SYMBOLS, max_pages: int = MAX_
 
 if __name__ == "__main__":
     # 로컬 실행: python src/collectors/naver_board/orchestrator.py
-    # 배포: prefect deploy src/collectors/naver_board/orchestrator.py --name "Naver-Board-Sync" --interval 14400 (4시간)
+    # 배포: prefect deploy src/collectors/naver_board/orchestrator.py --name "Naver-Board-Sync" --cron "0 */12 * * *"
     asyncio.run(naver_board_flow())

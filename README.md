@@ -166,14 +166,27 @@ uv run src/daily_intraday_orchestrator.py
 
 #### 1단계: Prefect 서버 실행
 
-Prefect 스케줄러가 동작하려면 Prefect 서버 또는 Worker가 실행되어야 합니다.
+Prefect 스케줄러가 동작하려면 먼저 Prefect API 서버가 떠 있어야 합니다.
 
 ```bash
-# 로컬 Prefect 서버 실행 (백그라운드)
+# 로컬 Prefect 서버 실행
 uv run prefect server start
 ```
 
-#### 2단계: Worker 실행
+#### 2단계: Prefect API URL 설정
+
+별도 터미널에서 Worker가 로컬 Prefect 서버에 연결할 수 있도록 API URL을 설정합니다.
+
+```bash
+uv run prefect config set PREFECT_API_URL="http://127.0.0.1:4200/api"
+
+# 현재 설정 확인
+uv run prefect config view
+```
+
+`prefect worker start` 실행 시 `PREFECT_API_URL must be set` 오류가 나면 이 단계가 누락된 것입니다.
+
+#### 3단계: Worker 실행
 
 별도 터미널에서 작업을 처리할 Worker를 실행합니다.
 
@@ -181,7 +194,7 @@ uv run prefect server start
 uv run prefect worker start --pool "default-agent-pool"
 ```
 
-#### 3단계: 스케줄 배포
+#### 4단계: 스케줄 배포
 
 매일 오후 4시(KST, 월~금)에 KOSPI 200 데이터를 자동 수집하도록 배포합니다.
 
@@ -192,10 +205,11 @@ uv run prefect deploy src/daily_intraday_orchestrator.py:daily_intraday_flow \
   --timezone "Asia/Seoul" \
   --pool "default-agent-pool"
 
-# 네이버 종목 토론방 수집 (매 4시간마다)
+# 네이버 종목 토론방 수집 (하루 2번, 12시간 간격)
 uv run prefect deploy src/collectors/naver_board/orchestrator.py:naver_board_flow \
   --name "Naver-Board-Sync" \
-  --cron "0 */4 * * *" \
+  --cron "0 */12 * * *" \
+  --timezone "Asia/Seoul" \
   --pool "default-agent-pool"
 ```
 
@@ -207,20 +221,105 @@ uv run prefect deployment ls
 
 # 수동으로 즉시 실행 (테스트용)
 uv run prefect deployment run 'Daily-KOSPI200-Intraday-Flow/KOSPI-Intraday-Daily'
+
+# 네이버 종목 토론방 플로우 즉시 실행 (테스트용)
+uv run prefect deployment run 'Naver-Board-Collection-Flow/Naver-Board-Sync'
 ```
 
 #### Docker 환경에서 자동화
 
-`docker-compose.yml`에 Prefect Worker 서비스를 추가하면 컨테이너 기반으로 스케줄을 운영할 수 있습니다.
+로컬 SQLite 기반 `prefect server start`는 worker를 붙이면 `database is locked`가 발생할 수 있습니다. 운영용으로는 `docker compose`로 PostgreSQL + Prefect Server + Prefect Worker를 함께 올리는 구성을 사용합니다.
 
 ```yaml
+postgres:
+  image: postgres:16-alpine
+
+prefect-server:
+  build: .
+  command: prefect server start --host 0.0.0.0
+
 prefect-worker:
   build: .
-  command: uv run prefect worker start --pool "default-agent-pool"
-  env_file: .env
-  volumes:
-    - ./data:/app/data
+  command: prefect worker start --pool "default-agent-pool"
 ```
+
+실행:
+
+```bash
+docker compose up -d postgres prefect-server prefect-worker
+```
+
+대시보드:
+
+```text
+http://127.0.0.1:4200
+```
+
+운영 메모:
+- `prefect-server`는 PostgreSQL을 메타데이터 DB로 사용합니다.
+- `prefect-worker`는 `http://prefect-server:4200/api`로 연결됩니다.
+- `prefect-worker`는 호스트의 [`trading_data.db`](/Users/giwooklee/Workspace/trading_system/trading_data.db)를 그대로 마운트하므로, 수집 결과가 로컬 DB에 바로 반영됩니다.
+- `prefect-worker`는 [`config.yaml`](/Users/giwooklee/Workspace/trading_system/config.yaml)도 함께 마운트하므로 Slack/Discord 알림 설정을 그대로 사용합니다.
+- `.env`를 쓸 경우 프로젝트 루트에 두고 컨테이너를 다시 띄워야 반영됩니다.
+
+배포 재등록:
+
+```bash
+# 로컬 호스트에서 재배포
+PREFECT_API_URL=http://127.0.0.1:4200/api uv run prefect deploy --name Naver-Board-Sync
+
+# 경로를 /app 기준으로 맞추려면 worker 컨테이너 내부에서 재배포
+docker compose exec -T \
+  -e PREFECT_API_URL=http://prefect-server:4200/api \
+  prefect-worker \
+  /app/.venv/bin/prefect deploy --name Naver-Board-Sync --prefect-file /app/prefect.yaml
+```
+
+수동 실행:
+
+```bash
+PREFECT_API_URL=http://127.0.0.1:4200/api \
+  uv run prefect deployment run 'Naver-Board-Collection-Flow/Naver-Board-Sync'
+```
+
+상태 확인:
+
+```bash
+docker compose ps
+docker compose logs -f prefect-worker
+docker compose logs -f prefect-server
+```
+
+#### 트러블슈팅: `sqlite3.OperationalError: database is locked`
+
+로컬 `prefect server start`는 기본적으로 SQLite(`~/.prefect/prefect.db`)를 사용합니다. 개발 환경에서는 간단하지만, Worker가 붙어 동시에 상태를 읽고 쓰기 시작하면 `database is locked`가 발생할 수 있습니다.
+
+먼저 아래 순서로 확인합니다.
+
+```bash
+# 1) Prefect 서버/워커를 모두 중지
+# 실행 중인 터미널에서 Ctrl+C
+
+# 2) 필요하면 DB timeout을 늘림
+uv run prefect config set PREFECT_API_DATABASE_TIMEOUT=60
+
+# 3) 서버 재시작
+uv run prefect server start
+
+# 4) 다른 터미널에서 워커 재시작
+uv run prefect worker start --pool "default-agent-pool"
+```
+
+락이 계속 발생하면 SQLite 대신 PostgreSQL을 사용하는 것이 안전합니다.
+
+```bash
+uv run prefect config set \
+  PREFECT_API_DATABASE_CONNECTION_URL="postgresql+asyncpg://postgres:password@localhost:5432/prefect"
+
+uv run prefect server start
+```
+
+Prefect 공식 문서 기준으로 로컬 기본 DB는 SQLite이며, 운영 또는 동시성 있는 환경에서는 PostgreSQL 사용이 권장됩니다.
 
 ---
 

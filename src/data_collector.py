@@ -9,7 +9,13 @@ class DataCollector:
     def __init__(self, db_path: str = "trading_data.db"):
         self.db_path = Path(__file__).parent.parent / db_path
         self._init_db()
-        self.market_handler = MarketHandler()
+        self.market_handler = None
+
+    def _get_market_handler(self) -> MarketHandler:
+        """KIS 인증이 필요한 시점에만 MarketHandler를 생성한다."""
+        if self.market_handler is None:
+            self.market_handler = MarketHandler()
+        return self.market_handler
 
     def _init_db(self):
         """데이터베이스 및 테이블 초기화"""
@@ -54,13 +60,14 @@ class DataCollector:
     def collect_domestic_stock(self, symbol: str, timeframe: str = "D", days: int = 100):
         """국내 주식 데이터 수집 및 저장"""
         logger.info(f"Collecting domestic data for {symbol}...")
-        self.market_handler.exchange = "서울"
+        market_handler = self._get_market_handler()
+        market_handler.exchange = "서울"
         
         end_day = datetime.now().strftime("%Y%m%d")
         start_day = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
         
         # limit=days 인자 추가 (페이지네이션 작동을 위해)
-        data = self.market_handler.fetch_ohlcv(symbol, timeframe=timeframe, start_day=start_day, end_day=end_day, limit=days)
+        data = market_handler.fetch_ohlcv(symbol, timeframe=timeframe, start_day=start_day, end_day=end_day, limit=days)
         
         if not data:
             logger.warning(f"No data found for {symbol}")
@@ -85,10 +92,11 @@ class DataCollector:
     def collect_oversea_stock(self, symbol: str, exchange: str = "나스닥", timeframe: str = "D", days: int = 100):
         """해외 주식 데이터 수집 및 저장"""
         logger.info(f"Collecting oversea data for {symbol} ({exchange})...")
-        self.market_handler.exchange = exchange
+        market_handler = self._get_market_handler()
+        market_handler.exchange = exchange
         
         # 페이지네이션 지원을 위해 limit 전달
-        data = self.market_handler.fetch_ohlcv(symbol, timeframe=timeframe, limit=days)
+        data = market_handler.fetch_ohlcv(symbol, timeframe=timeframe, limit=days)
         
         if not data:
             logger.warning(f"No data found for {symbol}")
@@ -113,9 +121,10 @@ class DataCollector:
     def collect_oversea_index(self, symbol: str, timeframe: str = "D", days: int = 100):
         """해외 지수(나스닥 등) 데이터 수집 및 저장"""
         logger.info(f"Collecting oversea index data for {symbol}...")
+        market_handler = self._get_market_handler()
         
         # 해외 지수는 전용 메서드 사용
-        data = self.market_handler.fetch_oversea_index_ohlcv(symbol, timeframe=timeframe)
+        data = market_handler.fetch_oversea_index_ohlcv(symbol, timeframe=timeframe)
         
         if not data:
             logger.warning(f"No data found for index {symbol}")
