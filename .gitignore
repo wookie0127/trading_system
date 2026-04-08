@@ -14,6 +14,7 @@ wheels/
 .DS_Store
 
 # Project specific ignores
+.env
 config.yaml
 access_token.json
 token.dat

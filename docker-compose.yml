@@ -71,7 +71,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
-    command: uvicorn api:app --host 0.0.0.0 --port 8000
+    command: uvicorn api.api:app --host 0.0.0.0 --port 8000
     working_dir: /app/src
 
   collector:
@@ -86,7 +86,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
-    command: python intraday_collector_daemon.py
+    command: python runners/intraday_collector_daemon.py
     working_dir: /app/src
 
 volumes:
