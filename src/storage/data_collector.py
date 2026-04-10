@@ -2,18 +2,33 @@ import sys as _sys; from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).parents[1]))  # src/ 패키지 루트
 del _sys, _Path
 
+import asyncio
+import os
 import sqlite3
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+
+import asyncpg
 from loguru import logger
 from core.kis_market_handler import MarketHandler
 
 class DataCollector:
     def __init__(self, db_path: str = "trading_data.db"):
-        self.db_path = Path(__file__).parent.parent / db_path
-        self._init_db()
+        self.postgres_url = self._normalize_postgres_url(os.getenv("TRADING_DATABASE_URL", ""))
+        self.backend = "postgres" if self.postgres_url else "sqlite"
+        self._pg_pool: asyncpg.Pool | None = None
+        raw_db_path = Path(db_path)
+        self.db_path = raw_db_path if raw_db_path.is_absolute() else Path(__file__).parents[2] / raw_db_path
+        if self.backend == "sqlite":
+            self._init_sqlite_db()
+        else:
+            logger.info("DataCollector initialized with PostgreSQL backend.")
         self.market_handler = None
+
+    @staticmethod
+    def _normalize_postgres_url(url: str) -> str:
+        return url.replace("postgresql+asyncpg://", "postgresql://", 1).strip()
 
     def _get_market_handler(self) -> MarketHandler:
         """KIS 인증이 필요한 시점에만 MarketHandler를 생성한다."""
@@ -21,8 +36,8 @@ class DataCollector:
             self.market_handler = MarketHandler()
         return self.market_handler
 
-    def _init_db(self):
-        """데이터베이스 및 테이블 초기화"""
+    def _init_sqlite_db(self):
+        """SQLite 데이터베이스 및 테이블 초기화"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -59,7 +74,54 @@ class DataCollector:
         """)
         conn.commit()
         conn.close()
-        logger.info(f"Database initialized at {self.db_path}")
+        logger.info(f"SQLite database initialized at {self.db_path}")
+
+    async def _ensure_postgres(self) -> asyncpg.Pool:
+        if not self.postgres_url:
+            raise RuntimeError("TRADING_DATABASE_URL is not set")
+        if self._pg_pool is None:
+            self._pg_pool = await asyncpg.create_pool(self.postgres_url, min_size=1, max_size=8)
+            await self._init_postgres_db()
+            logger.info("PostgreSQL database initialized.")
+        return self._pg_pool
+
+    async def _init_postgres_db(self):
+        if self._pg_pool is None:
+            raise RuntimeError("PostgreSQL pool is not initialized")
+        async with self._pg_pool.acquire() as conn:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS daily_prices (
+                    symbol TEXT,
+                    date TEXT,
+                    open DOUBLE PRECISION,
+                    high DOUBLE PRECISION,
+                    low DOUBLE PRECISION,
+                    close DOUBLE PRECISION,
+                    volume BIGINT,
+                    change DOUBLE PRECISION,
+                    market TEXT,
+                    PRIMARY KEY (symbol, date)
+                )
+            """)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS stock_board_posts (
+                    nid BIGINT PRIMARY KEY,
+                    symbol TEXT,
+                    company_name TEXT,
+                    date TEXT,
+                    title TEXT,
+                    author TEXT,
+                    views INTEGER,
+                    likes INTEGER,
+                    dislikes INTEGER,
+                    url TEXT
+                )
+            """)
+
+    async def close(self):
+        if self._pg_pool is not None:
+            await self._pg_pool.close()
+            self._pg_pool = None
 
     def collect_domestic_stock(self, symbol: str, timeframe: str = "D", days: int = 100):
         """국내 주식 데이터 수집 및 저장"""
@@ -152,6 +214,10 @@ class DataCollector:
 
     def _save_to_db(self, records: list):
         """DB에 대량 삽입 (중복 시 교체)"""
+        if self.backend == "postgres":
+            asyncio.run(self.save_daily_prices_async(records))
+            return
+
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         try:
@@ -169,6 +235,10 @@ class DataCollector:
 
     def save_board_posts(self, records: list):
         """종목 토론방 게시물 DB 저장 (중복 시 무시)"""
+        if self.backend == "postgres":
+            asyncio.run(self.save_board_posts_async(records))
+            return
+
         if not records:
             return
             
@@ -189,6 +259,9 @@ class DataCollector:
 
     def get_last_board_nid(self, symbol: str) -> int:
         """특정 종목의 가장 최근 게시물 ID 조회"""
+        if self.backend == "postgres":
+            return asyncio.run(self.get_last_board_nid_async(symbol))
+
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         try:
@@ -200,6 +273,51 @@ class DataCollector:
             return 0
         finally:
             conn.close()
+
+    async def save_daily_prices_async(self, records: list):
+        """일별 가격 데이터를 PostgreSQL에 저장한다."""
+        if not records:
+            return
+        pool = await self._ensure_postgres()
+        async with pool.acquire() as conn:
+            await conn.executemany("""
+                INSERT INTO daily_prices
+                (symbol, date, open, high, low, close, volume, change, market)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                ON CONFLICT (symbol, date) DO UPDATE SET
+                    open = EXCLUDED.open,
+                    high = EXCLUDED.high,
+                    low = EXCLUDED.low,
+                    close = EXCLUDED.close,
+                    volume = EXCLUDED.volume,
+                    change = EXCLUDED.change,
+                    market = EXCLUDED.market
+            """, records)
+        logger.success(f"Saved {len(records)} records to PostgreSQL.")
+
+    async def save_board_posts_async(self, records: list):
+        """종목 토론방 게시물을 PostgreSQL에 저장한다."""
+        if not records:
+            return
+        pool = await self._ensure_postgres()
+        async with pool.acquire() as conn:
+            await conn.executemany("""
+                INSERT INTO stock_board_posts
+                (nid, symbol, company_name, date, title, author, views, likes, dislikes, url)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                ON CONFLICT (nid) DO NOTHING
+            """, records)
+        logger.success(f"Saved {len(records)} board posts to PostgreSQL.")
+
+    async def get_last_board_nid_async(self, symbol: str) -> int:
+        """특정 종목의 가장 최근 게시물 ID를 PostgreSQL 또는 SQLite에서 조회한다."""
+        if self.backend == "postgres":
+            pool = await self._ensure_postgres()
+            async with pool.acquire() as conn:
+                result = await conn.fetchval("SELECT MAX(nid) FROM stock_board_posts WHERE symbol = $1", symbol)
+                return int(result) if result else 0
+
+        return self.get_last_board_nid(symbol)
 
 if __name__ == "__main__":
     collector = DataCollector()

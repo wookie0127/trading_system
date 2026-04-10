@@ -39,3 +39,18 @@ deployments:
   - cron: 0 */12 * * *
     timezone: Asia/Seoul
     day_or: true
+- name: Daily-News-Summary
+  version: null
+  tags: []
+  concurrency_limit: null
+  description: "GPT 기반 주요 뉴스 헤드라인 요약 아카이브\n주기: 매일 오전 7시 (0 7 * * *)"
+  entrypoint: src/news/daily_news_orchestrator.py:daily_news_summary_flow
+  parameters: {}
+  work_pool:
+    name: default-agent-pool
+    work_queue_name: null
+    job_variables: {}
+  schedules:
+  - cron: 0 7 * * *
+    timezone: Asia/Seoul
+    day_or: true

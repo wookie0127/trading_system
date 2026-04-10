@@ -17,6 +17,29 @@ services:
       timeout: 5s
       retries: 10
 
+  postgres-backup:
+    image: postgres:16-alpine
+    container_name: prefect-postgres-backup
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: prefect
+      POSTGRES_DB: prefect
+      POSTGRES_USER: prefect
+      POSTGRES_HOST: postgres
+      BACKUP_INTERVAL_SECONDS: 86400
+    volumes:
+      - ./backups/postgres:/backups
+    command: >
+      sh -c 'while true; do
+        ts=$$(date +%Y%m%d_%H%M%S);
+        pg_dump -h "$$POSTGRES_HOST" -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -Fc -f "/backups/prefect_$$ts.dump" &&
+        find /backups -name "*.dump" -type f -mtime +14 -delete;
+        sleep "$$BACKUP_INTERVAL_SECONDS";
+      done'
+
   prefect-server:
     build: .
     container_name: prefect-server
@@ -27,6 +50,7 @@ services:
     environment:
       PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://prefect:prefect@postgres:5432/prefect
       PREFECT_SERVER_API_HOST: 0.0.0.0
+      PREFECT_UI_API_URL: http://localhost:4200/api
     ports:
       - "4200:4200"
     command: prefect server start --host 0.0.0.0
@@ -42,6 +66,7 @@ services:
     environment:
       PREFECT_API_URL: http://prefect-server:4200/api
       PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://prefect:prefect@postgres:5432/prefect
+      TRADING_DATABASE_URL: postgresql://prefect:prefect@postgres:5432/prefect
       PYTHONPATH: /app/src
     env_file:
       - path: .env

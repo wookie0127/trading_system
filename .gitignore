@@ -22,6 +22,7 @@ trading_data.db
 data
 data/
 market_data/
+backups/
 output/
 notebook/
 reference/

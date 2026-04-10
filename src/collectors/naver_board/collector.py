@@ -12,18 +12,10 @@ src_dir = current_dir.parents[1]
 if src_dir not in sys.path:
     sys.path.append(str(src_dir))
 
-# 이제 src를 기준으로 임포트 (src 아래에 있으므로 절대 경로 지원)
-try:
-    from collectors.naver_board.scraper import NaverBoardScraper
-    from data_collector import DataCollector
-    from notifier import Notifier
-    from kospi200_symbols_sync import get_symbol_list
-except ImportError:
-    # 로컬 실행 시 예외 처리
-    from scraper import NaverBoardScraper
-    from data_collector import DataCollector
-    from notifier import Notifier
-    from kospi200_symbols_sync import get_symbol_list
+from bots.notifier import Notifier
+from collectors.naver_board.scraper import NaverBoardScraper
+from storage.data_collector import DataCollector
+from sync.kospi200_symbols_sync import get_symbol_list
 
 
 DEFAULT_SYMBOLS = "kospi200"
@@ -57,7 +49,7 @@ class NaverBoardCollector:
         """특정 종목의 게시물을 증분 수집"""
         logger.info(f"[{symbol}] Collection started (max_pages={max_pages})")
         
-        last_nid = self.db.get_last_board_nid(symbol)
+        last_nid = await self.db.get_last_board_nid_async(symbol)
         logger.info(f"[{symbol}] Last collected nid in DB: {last_nid}")
         
         all_new_posts = []
@@ -110,7 +102,7 @@ class NaverBoardCollector:
                  p["author"], p["views"], p["likes"], p["dislikes"], p["url"])
                 for p in all_new_posts
             ]
-            self.db.save_board_posts(records)
+            await self.db.save_board_posts_async(records)
             logger.success(f"[{symbol}] Successfully saved {len(all_new_posts)} new posts.")
         else:
             logger.info(f"[{symbol}] No new posts to save.")
@@ -147,7 +139,10 @@ class NaverBoardCollector:
                 return await self.collect_symbol(symbol, max_pages)
 
         tasks = [collect_with_limit(symbol) for symbol in symbol_list]
-        results = await asyncio.gather(*tasks)
+        try:
+            results = await asyncio.gather(*tasks)
+        finally:
+            await self.db.close()
         
         # 알림 요약 생성
         total_new = sum(r["count"] for r in results)

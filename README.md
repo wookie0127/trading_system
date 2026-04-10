@@ -148,6 +148,40 @@ DISCORD_CHANNEL_ID: your-channel-id-number
 # DISCORD_WEBHOOK_URL: https://discord.com/api/webhooks/...
 ```
 
+### 📰 GPT 아침 뉴스 브리핑
+
+매일 오전 7시(KST)에 RSS 헤드라인을 수집한 뒤 GPT로 한국어 Markdown 브리핑을 생성해 저장할 수 있습니다.
+
+- 기본 저장 경로: `data/news_summaries/YYYY-MM-DD.md`
+- 기본 모델: `gpt-5-mini`
+- 기본 피드: Google News 한국어 종합 / 비즈니스 / 월드 RSS
+
+필수 환경변수:
+
+```bash
+OPENAI_API_KEY=your_openai_api_key
+OPENAI_MODEL=gpt-5-mini
+NEWS_RSS_FEEDS=https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko,https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=ko&gl=KR&ceid=KR:ko,https://news.google.com/rss/headlines/section/topic/WORLD?hl=ko&gl=KR&ceid=KR:ko
+NEWS_SUMMARY_DIR=data/news_summaries
+NEWS_MAX_ITEMS=20
+```
+
+수동 실행:
+
+```bash
+uv run python src/news/daily_news_orchestrator.py
+```
+
+Prefect 배포:
+
+```bash
+uv run prefect deploy src/news/daily_news_orchestrator.py:daily_news_summary_flow \
+  --name "Daily-News-Summary" \
+  --cron "0 7 * * *" \
+  --timezone "Asia/Seoul" \
+  --pool "default-agent-pool"
+```
+
 > **Discord 채널 ID 확인**: 디스코드 → 설정 → 고급 → 개발자 모드 ON → 채널 우클릭 → "채널 ID 복사"
 
 ---

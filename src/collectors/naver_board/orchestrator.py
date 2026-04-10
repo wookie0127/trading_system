@@ -11,7 +11,7 @@ if str(src_dir) not in sys.path:
 
 from collectors.naver_board.collector import NaverBoardCollector
 from collectors.naver_board.collector import resolve_symbols
-from notifier import Notifier
+from bots.notifier import Notifier
 
 # --- Configuration ---
 DEFAULT_SYMBOLS = "kospi200"

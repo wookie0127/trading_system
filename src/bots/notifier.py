@@ -11,12 +11,12 @@ CURRENT_DIR = Path(__file__).resolve().parent
 KEY_PATH = Path.home() / ".ssh" / "kis"
 load_dotenv(KEY_PATH)
 
-CONFIG_PATH = CURRENT_DIR.parent / "config.yaml"
+CONFIG_PATH = CURRENT_DIR.parents[1] / "config.yaml"
 config = {}
 if CONFIG_PATH.exists():
-    with open(CONFIG_PATH, "r") as f:
+    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
-        for k, v in config.items():
+        for k, v in (config or {}).items():
             os.environ[k] = str(v)
 
 class Notifier:
