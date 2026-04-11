@@ -37,8 +37,19 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
-REFERENCE_FILE = Path(__file__).parents[1] / "data" / "reference" / "kospi200_symbols.json"
+REFERENCE_FILE_CANDIDATES = [
+    Path(__file__).parents[2] / "data" / "reference" / "kospi200_symbols.json",
+    Path(__file__).parents[1] / "data" / "reference" / "kospi200_symbols.json",
+]
 TOP_N = 200  # 시총 상위 N종목
+
+
+def get_reference_file() -> Path:
+    """실행 환경에 맞는 KOSPI200 참조 JSON 경로를 반환한다."""
+    for candidate in REFERENCE_FILE_CANDIDATES:
+        if candidate.exists():
+            return candidate
+    return REFERENCE_FILE_CANDIDATES[0]
 
 
 def _fetch_via_fdr() -> list[dict]:
@@ -64,9 +75,10 @@ def _fetch_via_fdr() -> list[dict]:
 
 def load_symbols() -> dict:
     """저장된 JSON 로드. 파일 없으면 빈 dict 반환."""
-    if not REFERENCE_FILE.exists():
+    reference_file = get_reference_file()
+    if not reference_file.exists():
         return {}
-    with REFERENCE_FILE.open(encoding="utf-8") as f:
+    with reference_file.open(encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -99,12 +111,13 @@ def sync_kospi200_symbols(target_date: date | None = None) -> None:
         "components": components,
     }
 
-    REFERENCE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with REFERENCE_FILE.open("w", encoding="utf-8") as f:
+    reference_file = get_reference_file()
+    reference_file.parent.mkdir(parents=True, exist_ok=True)
+    with reference_file.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
     logger.success(
-        f"KOSPI200 symbols JSON 갱신 완료 ({len(components)}종목) → {REFERENCE_FILE}"
+        f"KOSPI200 symbols JSON 갱신 완료 ({len(components)}종목) → {reference_file}"
     )
 
 
