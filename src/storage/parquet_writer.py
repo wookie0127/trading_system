@@ -10,6 +10,7 @@ import pyarrow.parquet as pq
 from loguru import logger
 
 MARKET_DATA_DIR = Path(__file__).parents[1] / "data" / "market_data"
+_NUMERIC_FLOAT_COLUMNS = ("open", "high", "low", "close", "volume", "trade_value")
 
 _PATHS = {
     "nasdaq_1min":           MARKET_DATA_DIR / "us" / "nasdaq" / "1min",
@@ -33,22 +34,40 @@ def get_dir(key: str) -> Path:
     return _PATHS[key]
 
 
+def _normalize_schema(df: pd.DataFrame) -> pd.DataFrame:
+    """Coerce common market-data columns to stable dtypes before parquet writes."""
+    normalized = df.copy()
+
+    if "timestamp" in normalized.columns:
+        normalized["timestamp"] = pd.to_datetime(normalized["timestamp"], errors="coerce")
+
+    if "symbol" in normalized.columns:
+        normalized["symbol"] = normalized["symbol"].astype("string")
+
+    for col in _NUMERIC_FLOAT_COLUMNS:
+        if col in normalized.columns:
+            normalized[col] = pd.to_numeric(normalized[col], errors="coerce").astype("float64")
+
+    return normalized
+
+
 def write_parquet(df: pd.DataFrame, dest: Path) -> None:
     """Write *df* to *dest*, deduplicating against any existing file."""
+    df = _normalize_schema(df)
+
     if df.empty:
         logger.warning(f"Empty DataFrame — skipping write to {dest}")
         return
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    table = pa.Table.from_pandas(df, preserve_index=False)
 
     if dest.exists():
-        existing = pq.read_table(dest)
-        table = pa.concat_tables([existing, table])
-        # Drop duplicates in Arrow via pandas round-trip
-        merged = table.to_pandas()
+        existing = _normalize_schema(pq.read_table(dest).to_pandas())
+        merged = pd.concat([existing, df], ignore_index=True)
         merged = merged.drop_duplicates(subset=["timestamp", "symbol"])
         table = pa.Table.from_pandas(merged, preserve_index=False)
+    else:
+        table = pa.Table.from_pandas(df, preserve_index=False)
 
     pq.write_table(table, dest, compression="snappy")
     logger.info(f"Saved {table.num_rows} rows → {dest}")

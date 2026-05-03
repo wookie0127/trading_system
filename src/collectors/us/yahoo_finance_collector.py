@@ -28,12 +28,11 @@ KIS API 없이 yfinance만으로 수집 가능한 데이터:
   uv run python src/yahoo_finance_collector.py --step kospi200_intraday
   uv run python src/yahoo_finance_collector.py --step kospi200_daily --start 2020-01-01
 """
+from __future__ import annotations
+
 import sys as _sys; from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).parents[2]))  # src/ 패키지 루트
 del _sys, _Path
-
-
-from __future__ import annotations
 
 import asyncio
 from datetime import date, timedelta
@@ -114,6 +113,32 @@ def _normalize_ts(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _extract_symbol_frame(raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    """
+    Extract a single symbol slice from a yfinance DataFrame.
+
+    yfinance may return either:
+    - MultiIndex columns keyed by ticker for multi-symbol downloads
+    - MultiIndex columns keyed by price/ticker even for a single symbol
+    - Flat columns for some code paths / versions
+    """
+    if raw.empty:
+        return pd.DataFrame()
+
+    if not isinstance(raw.columns, pd.MultiIndex):
+        return raw.copy()
+
+    level0 = set(raw.columns.get_level_values(0))
+    level_last = set(raw.columns.get_level_values(-1))
+
+    if symbol in level0:
+        return raw[symbol].copy()
+    if symbol in level_last:
+        return raw.xs(symbol, axis=1, level=-1).copy()
+
+    return pd.DataFrame()
+
+
 def _download_1min(
     symbols: list[str],
     start: date,
@@ -142,16 +167,10 @@ def _download_1min(
 
     frames: list[pd.DataFrame] = []
 
-    frames: list[pd.DataFrame] = []
- 
-    # yfinance returns MultiIndex if group_by="ticker"
     for sym in symbols:
         try:
-            # Check if slice exists
-            if sym not in raw.columns.levels[0]:
-                continue
-            sub = raw[sym].copy()
-        except (KeyError, AttributeError):
+            sub = _extract_symbol_frame(raw, sym)
+        except Exception:
             logger.warning(f"  {sym}: 데이터 없음")
             continue
         if sub.empty:
@@ -207,7 +226,7 @@ def _download_daily(
     frames: list[pd.DataFrame] = []
 
     if len(symbols) == 1:
-        df = raw.reset_index()
+        df = _extract_symbol_frame(raw, symbols[0]).reset_index()
         df = df.rename(columns={
             "Date": "timestamp",
             "Open": "open",
@@ -468,6 +487,47 @@ async def collect_kospi200_intraday(
         await asyncio.sleep(1.0)  # yfinance 과부하 방지
 
     logger.success(f"KOSPI200 1분봉 저장 완료: {total_rows}행 → {dest}")
+
+
+async def collect_us_stock_intraday(
+    trade_date: date | None = None,
+    symbols: list[str] | None = None,
+) -> None:
+    """
+    US 종목/ETF 1분봉 수집.
+
+    기본값은 QQQ 한 종목이며, 결과는 us_stock_1min 경로에 저장한다.
+    """
+    if trade_date is None:
+        trade_date = date.today()
+
+    target_symbols = [s.strip().upper() for s in (symbols or ["QQQ"]) if s and s.strip()]
+    if not target_symbols:
+        logger.error("수집할 미국 종목 심볼이 없습니다.")
+        return
+
+    logger.info(f"US 종목 1분봉 (Yahoo) {trade_date}: {target_symbols}")
+
+    dest = daily_path("us_stock_1min", str(trade_date))
+    total_rows = 0
+
+    for i, batch in enumerate(_batches(target_symbols, _BATCH_SIZE), 1):
+        logger.debug(f"  US 배치 {i}: {batch}")
+
+        df = await asyncio.to_thread(_download_1min, batch, trade_date, trade_date)
+        if df.empty:
+            logger.warning(f"  US 배치 {i}: 데이터 없음")
+            continue
+
+        df = validate_intraday(df)
+        if df.empty:
+            continue
+
+        write_parquet(df.reset_index(drop=True), dest)
+        total_rows += len(df)
+        await asyncio.sleep(1.0)
+
+    logger.success(f"US 종목 1분봉 저장 완료: {total_rows}행 → {dest}")
 
 
 # ──────────────────────────────────────────────

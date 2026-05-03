@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from loguru import logger
 import discord
 import anyio
+import anyio.abc
 
 from follow_dante_reading.signal_schema import ReadingMessage, TelegramDialog
 

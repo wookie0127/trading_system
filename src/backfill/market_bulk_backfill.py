@@ -11,6 +11,8 @@ data/reference/ 의 JSON reference 파일을 input으로 받아
 
 == 지원 마켓 ==
   kospi200  → data/reference/kospi200_symbols.json  (.KS suffix 추가)
+  qqq       → data/reference/qqq_symbols.json
+  us_etf_core → data/reference/us_etf_core_symbols.json
   sp500     → data/reference/sp500_symbols.json
   nasdaq100 → data/reference/nasdaq100_symbols.json
 
@@ -22,6 +24,8 @@ data/reference/ 의 JSON reference 파일을 input으로 받아
 
 Usage:
   uv run python src/market_bulk_backfill.py --market kospi200
+  uv run python src/market_bulk_backfill.py --market qqq
+  uv run python src/market_bulk_backfill.py --market us_etf_core
   uv run python src/market_bulk_backfill.py --market sp500
   uv run python src/market_bulk_backfill.py --market nasdaq100
   uv run python src/market_bulk_backfill.py --market all
@@ -55,14 +59,27 @@ from storage.data_validation import validate_intraday
 # 상수
 # ---------------------------------------------------------------------------
 
-REFERENCE_DIR = Path(__file__).parents[1] / "data" / "reference"
+REFERENCE_DIR_CANDIDATES = [
+    Path(__file__).parents[2] / "data" / "reference",
+    Path(__file__).parents[1] / "data" / "reference",
+]
+
+
+def _resolve_reference_dir() -> Path:
+    for candidate in REFERENCE_DIR_CANDIDATES:
+        if candidate.exists():
+            return candidate
+    return REFERENCE_DIR_CANDIDATES[0]
+
+
+REFERENCE_DIR = _resolve_reference_dir()
 
 _INTRADAY_CHUNK_DAYS = 7      # 요청당 최대 7 calendar days (yfinance 제한)
 _INTRADAY_LOOKBACK   = 28     # 총 lookback: 28 calendar days (~20 거래일)
 _DAILY_BATCH_SIZE    = 50     # 일봉 배치당 종목 수
 _INTRADAY_BATCH_SIZE = 20     # 1분봉 배치당 종목 수 (메모리 절약)
 
-MarketKey = Literal["kospi200", "sp500", "nasdaq100"]
+MarketKey = Literal["kospi200", "qqq", "us_etf_core", "sp500", "nasdaq100"]
 
 _MARKET_CONFIG: dict[str, dict] = {
     "kospi200": {
@@ -71,6 +88,20 @@ _MARKET_CONFIG: dict[str, dict] = {
         "daily_path_key":  "kospi200_daily_yf",
         "intraday_path_key": "kospi200_1min",
         "region":          "KR",
+    },
+    "qqq": {
+        "json_file":       REFERENCE_DIR / "qqq_symbols.json",
+        "yf_suffix":       "",
+        "daily_path_key":  "us_stock_daily",
+        "intraday_path_key": "us_stock_1min",
+        "region":          "US",
+    },
+    "us_etf_core": {
+        "json_file":       REFERENCE_DIR / "us_etf_core_symbols.json",
+        "yf_suffix":       "",
+        "daily_path_key":  "us_stock_daily",
+        "intraday_path_key": "us_stock_1min",
+        "region":          "US",
     },
     "sp500": {
         "json_file":       REFERENCE_DIR / "sp500_symbols.json",
@@ -115,6 +146,25 @@ def _to_yf_symbol(code: str, suffix: str) -> str:
     return code
 
 
+def _extract_symbol_frame(raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    """Handle yfinance's flat / MultiIndex outputs for both single and multi-symbol downloads."""
+    if raw.empty:
+        return pd.DataFrame()
+
+    if not isinstance(raw.columns, pd.MultiIndex):
+        return raw.copy()
+
+    level0 = set(raw.columns.get_level_values(0))
+    level_last = set(raw.columns.get_level_values(-1))
+
+    if symbol in level0:
+        return raw[symbol].copy()
+    if symbol in level_last:
+        return raw.xs(symbol, axis=1, level=-1).copy()
+
+    return pd.DataFrame()
+
+
 # ---------------------------------------------------------------------------
 # Daily backfill (yfinance period='max')
 # ---------------------------------------------------------------------------
@@ -136,7 +186,7 @@ def _download_daily_max(yf_symbols: list[str]) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
 
     if len(yf_symbols) == 1:
-        sub = raw.reset_index().rename(columns={
+        sub = _extract_symbol_frame(raw, yf_symbols[0]).reset_index().rename(columns={
             "Date": "timestamp", "Open": "open", "High": "high",
             "Low": "low", "Close": "close", "Volume": "volume",
         })
@@ -146,8 +196,8 @@ def _download_daily_max(yf_symbols: list[str]) -> pd.DataFrame:
     else:
         for sym in yf_symbols:
             try:
-                sub = raw[sym].copy()
-            except KeyError:
+                sub = _extract_symbol_frame(raw, sym)
+            except Exception:
                 logger.warning(f"  {sym}: 일봉 데이터 없음")
                 continue
             if sub.empty:
@@ -235,7 +285,7 @@ def _download_1min_chunk(yf_symbols: list[str], start: date, end: date) -> pd.Da
     frames: list[pd.DataFrame] = []
 
     if len(yf_symbols) == 1:
-        sub = raw.reset_index().rename(columns={
+        sub = _extract_symbol_frame(raw, yf_symbols[0]).reset_index().rename(columns={
             "Datetime": "timestamp", "Date": "timestamp",
             "Open": "open", "High": "high", "Low": "low",
             "Close": "close", "Volume": "volume",
@@ -245,10 +295,8 @@ def _download_1min_chunk(yf_symbols: list[str], start: date, end: date) -> pd.Da
     else:
         for sym in yf_symbols:
             try:
-                if sym not in raw.columns.get_level_values(0):
-                    continue
-                sub = raw[sym].copy()
-            except (KeyError, AttributeError):
+                sub = _extract_symbol_frame(raw, sym)
+            except Exception:
                 continue
             if sub.empty:
                 continue
@@ -460,6 +508,12 @@ if __name__ == "__main__":
   # KOSPI200 전 종목 일봉+1분봉 backfill
   uv run python src/market_bulk_backfill.py --market kospi200
 
+  # QQQ 단일 자산 일봉+1분봉 backfill
+  uv run python src/market_bulk_backfill.py --market qqq
+
+  # 미국 ETF 코어 바스켓 백필
+  uv run python src/market_bulk_backfill.py --market us_etf_core
+
   # S&P500 일봉만
   uv run python src/market_bulk_backfill.py --market sp500 --skip-intraday
 
@@ -472,7 +526,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--market",
-        choices=["kospi200", "sp500", "nasdaq100", "all"],
+        choices=["kospi200", "qqq", "us_etf_core", "sp500", "nasdaq100", "all"],
         default="kospi200",
         help="수집할 마켓 (default: kospi200)",
     )

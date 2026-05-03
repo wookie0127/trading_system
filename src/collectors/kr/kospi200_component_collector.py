@@ -6,12 +6,11 @@ Storage: market_data/metadata/kospi200_components/<YYYY-MM-DD>.parquet
 
 Schema: date | symbol | name | index_name
 """
+from __future__ import annotations
+
 import sys as _sys; from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).parents[2]))  # src/ 패키지 루트
 del _sys, _Path
-
-
-from __future__ import annotations
 
 import asyncio
 from datetime import date

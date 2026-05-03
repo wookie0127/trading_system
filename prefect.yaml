@@ -22,6 +22,21 @@ pull: []
 # the deployments section allows you to provide configuration
 # for deploying flows
 deployments:
+- name: Daily-Yahoo-Intraday
+  version: null
+  tags: []
+  concurrency_limit: null
+  description: "yfinance 기반 KOSPI200 + 미국 ETF 바스켓 1분봉 일일 수집\n주기: 화~토 오전 6시 30분 (30 6 * * 2-6)"
+  entrypoint: src/pipelines/daily_yahoo_intraday_orchestrator.py:daily_yahoo_intraday_flow
+  parameters: {}
+  work_pool:
+    name: default-agent-pool
+    work_queue_name: null
+    job_variables: {}
+  schedules:
+  - cron: 30 6 * * 2-6
+    timezone: Asia/Seoul
+    day_or: true
 - name: Naver-Board-Sync
   version: null
   tags: []
@@ -45,6 +60,21 @@ deployments:
   concurrency_limit: null
   description: "GPT 기반 주요 뉴스 헤드라인 요약 아카이브\n주기: 매일 오전 7시 (0 7 * * *)"
   entrypoint: src/news/daily_news_orchestrator.py:daily_news_summary_flow
+  parameters: {}
+  work_pool:
+    name: default-agent-pool
+    work_queue_name: null
+    job_variables: {}
+  schedules:
+  - cron: 0 7 * * *
+    timezone: Asia/Seoul
+    day_or: true
+- name: Daily-News-Summary-Gemini
+  version: null
+  tags: []
+  concurrency_limit: null
+  description: "Gemini CLI 기반 주요 뉴스 헤드라인 요약 후 Obsidian 저장\n주기: 매일 오전 7시 (0 7 * * *)"
+  entrypoint: src/news/gemini_news_orchestrator.py:daily_news_summary_gemini_flow
   parameters: {}
   work_pool:
     name: default-agent-pool

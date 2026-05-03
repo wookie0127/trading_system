@@ -1,8 +1,7 @@
 import yfinance as yf
-import pandas as pd
 import argparse
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # Yahoo Finance 데이터 제한 정의 (일 단위)
 # max_request: 한 번의 API 호출로 가져올 수 있는 최대 기간
@@ -25,14 +24,14 @@ def parse_period_to_days(period_str: str) -> int:
     """
     if period_str == "max":
         return 999999  # 아주 큰 값
-    
+
     match = re.match(r"(\d+)([a-z]+)", period_str.lower())
     if not match:
         raise ValueError(f"Invalid period format: {period_str}")
-    
+
     value, unit = match.groups()
     value = int(value)
-    
+
     if unit in ["d", "day"]:
         return value
     elif unit in ["mo", "month"]:
@@ -54,17 +53,17 @@ def validate_yf_params(symbol: str, interval: str, period: str):
     if interval not in YF_LIMITS:
         # 정의되지 않은 interval은 기본적으로 허용하되 경고 없이 진행 (또는 필요시 추가)
         return
-    
+
     limit = YF_LIMITS[interval]
     requested_days = parse_period_to_days(period)
-    
+
     # 1. 한 번의 요청(max_request) 제한 체크
     if limit["max_request"] is not None and requested_days > limit["max_request"]:
         raise ValueError(
             f"[{symbol}] Interval '{interval}'은(는) 한 번의 요청으로 최대 {limit['max_request']}일치만 가져올 수 있습니다. "
             f"요청된 기간: {period} ({requested_days}일)"
         )
-    
+
     # 2. 전체 Lookback 제한 체크
     if limit["max_lookback"] is not None and requested_days > limit["max_lookback"]:
         raise ValueError(
@@ -77,20 +76,20 @@ def check_data_range(symbol: str, interval: str, period: str):
     검증 후 데이터를 다운로드하여 범위를 출력합니다.
     """
     print(f"Checking data for {symbol} (Interval: {interval}, Period: {period})...")
-    
+
     # 파라미터 검증 (제한 위반 시 raise)
     validate_yf_params(symbol, interval, period)
-    
+
     try:
         df = yf.download(symbol, period=period, interval=interval, progress=False)
         if df.empty:
             print("  FAILED: No data returned from Yahoo Finance.")
             return
-        
+
         # MultiIndex 처리
         if hasattr(df.columns, "levels"):
             df.columns = [col[0] for col in df.columns]
-        
+
         df = df.dropna()
         if df.empty:
             print("  FAILED: Data is empty after dropping NaN.")
@@ -98,7 +97,7 @@ def check_data_range(symbol: str, interval: str, period: str):
 
         print(f"  SUCCESS: {len(df)} rows found.")
         print(f"  Range: {df.index.min()} to {df.index.max()}")
-        
+
     except Exception as e:
         print(f"  ERROR during download: {e}")
 
@@ -107,9 +106,9 @@ if __name__ == "__main__":
     parser.add_argument("--symbol", default="QQQ", help="Ticker symbol (e.g., QQQ)")
     parser.add_argument("--interval", default="1m", help="Data interval (e.g., 1m, 5m, 1d)")
     parser.add_argument("--period", default="7d", help="Data period (e.g., 7d, 1mo, 3mo)")
-    
+
     args = parser.parse_args()
-    
+
     try:
         check_data_range(args.symbol, args.interval, args.period)
     except ValueError as ve:

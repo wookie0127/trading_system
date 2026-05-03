@@ -19,10 +19,14 @@ config.yaml
 access_token.json
 token.dat
 trading_data.db
+src/follow_dante_reading/*.session*
+src/follow_dante_reading/chats.yaml
+logs/follow_dante_reading/
 data
 data/
 market_data/
 backups/
+obsidian/
 output/
 notebook/
 reference/

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import anyio
+import anyio.abc
 from pathlib import Path
 import sys
 import csv
 from datetime import datetime
-from tenacity import AsyncRetrying, wait_exponential, stop_never, retry_if_exception_type, before_sleep_log
+from tenacity import AsyncRetrying, wait_exponential, stop_never, retry_if_exception_type, before_sleep_log     
 from telethon import events
 
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -98,18 +99,18 @@ class DanteReadingOrchestrator:
             download_media=True,
             media_dir=self.store.attachments_dir,
         )
-        
+
         if not output_file:
             dump_dir = self.store.base_dir / "dumps"
             dump_dir.mkdir(parents=True, exist_ok=True)
             output_file = dump_dir / f"dump_{resolved_chat}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-        
+
         output_path = Path(output_file)
-        
+
         with open(output_path, "w", newline="", encoding="utf-8-sig") as f:
             writer = csv.writer(f)
             writer.writerow(["ID", "Date", "ChatID", "ChatTitle", "Text", "Signal_Action", "Company", "Media_Path"])
-            
+
             for msg in messages:
                 signal = parse_reading_signal(msg) # 덤프 시에는 빠른 규칙 기반 분석 결과 포함
                 writer.writerow([
@@ -122,7 +123,7 @@ class DanteReadingOrchestrator:
                     signal.company_name if signal else "n/a",
                     msg.media_path or ""
                 ])
-        
+
         logger.info(f"Successfully dumped {len(messages)} messages to {output_path}")
         print(f"Dump completed: {output_path}")
 
@@ -168,7 +169,7 @@ class DanteReadingOrchestrator:
                     try:
                         await self.client.ensure_authorized()
                         entity = await self.client.resolve_entity(resolved_chat)
-                        
+
                         @self.client.client.on(events.NewMessage(chats=entity))
                         async def _handler(event):
                             parsed = await self.client._to_reading_message(event.message, download_media, self.store.attachments_dir)
@@ -212,12 +213,12 @@ class DanteReadingOrchestrator:
 
     async def _process_message(self, message, notify: bool, tg: anyio.abc.TaskGroup | None = None):
         self.store.save_message(message)
-        
+
         if self.use_llm:
             signal = parse_reading_signal_with_llm(message)
         else:
             signal = parse_reading_signal(message)
-            
+
         logger.info(
             f"Captured message id={message.message_id} chat_id={message.chat_id} "
             f"title={message.chat_title} has_media={message.has_media}"
@@ -232,10 +233,10 @@ class DanteReadingOrchestrator:
         )
         if notify:
             await self.notifier.notify_all(self._format_signal(signal))
-        
+
         # 매매 신호 처리 (트레이더 호출, TaskGroup 전달)
         await self.trader.handle_signal(signal, tg=tg)
-        
+
         return signal
 
     @staticmethod
