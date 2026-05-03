@@ -35,6 +35,10 @@ dependencies = [
     "beautifulsoup4>=4.12.0",
     "pykrx>=1.2.4",
     "finance-datareader>=0.9.110",
+    "polars>=1.40.0",
+    "streamlit>=1.56.0",
+    "plotly>=6.6.0",
+    "telethon>=1.43.2",
 ]
 
 [dependency-groups]

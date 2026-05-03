@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import re
+import json
+import subprocess
+from loguru import logger
 
 from follow_dante_reading.signal_schema import ReadingMessage, ReadingSignal
 
@@ -118,4 +121,71 @@ def _infer_confidence(
     if "펀더멘탈" in text or "지지" in text:
         score += 0.05
     return min(score, 0.95)
+
+
+def parse_reading_signal_with_llm(message: ReadingMessage, model: str = "gemini") -> ReadingSignal | None:
+    """LLM(Gemini/Codex)을 사용하여 메시지를 파싱합니다."""
+    text = (message.text or "").strip()
+    if not text:
+        return None
+
+    prompt = f"""
+    아래는 주식 리딩방의 텔레그램 메시지입니다. 
+    이 메시지에서 종목명, 액션(buy_candidate, sell, watch, ignore), 손절가(%), 매수 힌트, 그리고 분석 근거를 추출하여 JSON 형식으로 응답하세요.
+    
+    [응답 JSON 형식]
+    {{
+        "company_name": "종목명",
+        "action": "buy_candidate" | "sell" | "watch" | "ignore",
+        "stop_loss_pct": "손절가 (예: 5.0)",
+        "entry_hint": "breakout" | "pullback" | "current_price" | null,
+        "confidence": 0.0 ~ 1.0,
+        "rationale_text": "짧은 분석 요약"
+    }}
+
+    [메시지 본문]
+    {text}
+    """
+
+    try:
+        # 사용자가 CLI를 사용 중이라고 했으므로, subprocess로 CLI 호출
+        # (실제 환경의 명령어에 맞게 수정 필요. 예: 'gemini "..."')
+        cmd = [model, prompt] 
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        llm_out = result.stdout.strip()
+        
+        json_str = _extract_json(llm_out)
+        data = json.loads(json_str)
+
+        return ReadingSignal(
+            source=message.source,
+            message_id=message.message_id,
+            posted_at=message.posted_at,
+            chat_id=message.chat_id,
+            chat_title=message.chat_title,
+            company_name=data.get("company_name"),
+            action=data.get("action", "ignore"),
+            confidence=data.get("confidence", 0.5),
+            stop_loss_pct=float(data["stop_loss_pct"]) / 100.0 if data.get("stop_loss_pct") else None,
+            entry_hint=data.get("entry_hint"),
+            rationale_text=data.get("rationale_text") or text[:200],
+            raw_text=message.raw_text,
+            media_path=message.media_path,
+        )
+    except Exception as e:
+        logger.error(f"LLM Parsing failed: {e}. Falling back to rule-based parser.")
+        return parse_reading_signal(message)
+
+
+def _extract_json(text: str) -> str:
+    # ```json ... ``` 블록 추출 시도
+    match = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL)
+    if match:
+        return match.group(1)
+    # 그냥 JSON 중괄호 추출 시도
+    match = re.search(r"({.*})", text, re.DOTALL)
+    if match:
+        return match.group(1)
+    return text
 

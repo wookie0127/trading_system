@@ -68,13 +68,16 @@ services:
       PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://prefect:prefect@postgres:5432/prefect
       TRADING_DATABASE_URL: postgresql://prefect:prefect@postgres:5432/prefect
       PYTHONPATH: /app/src
+      NEWS_OBSIDIAN_SUBDIR: 뉴스요약
     env_file:
       - path: .env
         required: false
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+      - "${HOME}/Documents/Obsidian Vault/TradingSystem:/app/obsidian"
       - ./trading_data.db:/app/trading_data.db
+      - ${HOME}/.gemini:/root/.gemini
       - ./src:/app/src
       - ./config.yaml:/app/config.yaml:ro
       - ./prefect.yaml:/app/prefect.yaml:ro
@@ -113,6 +116,26 @@ services:
       - ./logs:/app/logs
     command: python runners/intraday_collector_daemon.py
     working_dir: /app/src
+
+  dante-bot:
+    build: .
+    container_name: dante-bot
+    restart: unless-stopped
+    environment:
+      - PYTHONPATH=/app/src
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./src:/app/src
+      - ./config.yaml:/app/config.yaml:ro
+      - ${HOME}/.ssh:/root/.ssh:ro
+      - ${HOME}/.gemini:/root/.gemini:ro
+    command: python src/follow_dante_reading/orchestrator.py serve --chat dante --mock --notify --use_llm
+    working_dir: /app
 
 volumes:
   prefect-postgres-data:

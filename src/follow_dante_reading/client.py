@@ -7,6 +7,8 @@ from typing import Awaitable, Callable
 
 from dotenv import load_dotenv
 from loguru import logger
+import discord
+import anyio
 
 from follow_dante_reading.signal_schema import ReadingMessage, TelegramDialog
 
@@ -26,6 +28,91 @@ load_dotenv(TELEGRAM_ENV_PATH)
 load_dotenv(CURRENT_DIR.parents[2] / ".env")
 
 SESSION_BASENAME = CURRENT_DIR / "test_check"
+
+async def get_discord_input(prompt: str) -> str:
+    """Discord 채널로부터 입력을 대기합니다."""
+    token = os.environ.get("DISCORD_TOKEN")
+    channel_id = os.environ.get("DISCORD_CHANNEL_ID")
+    
+    if not token or not channel_id:
+        # 폴백: Discord 정보가 없으면 터미널 입력 사용
+        logger.warning("DISCORD_TOKEN or DISCORD_CHANNEL_ID missing. Falling back to terminal input.")
+        return input(f"{prompt}: ")
+
+    intents = discord.Intents.default()
+    intents.message_content = True
+    client = discord.Client(intents=intents)
+    
+    # anyio의 MemoryObjectStream을 사용하여 값을 전달받음 (Future 대체)
+    send_stream, receive_stream = anyio.create_memory_object_stream(1)
+
+    @client.event
+    async def on_ready():
+        logger.info("Auth-helper Discord client ready.")
+        
+        # 1. 이름으로 채널 찾기 시도 (사용자 요청: #telegram_client 최우선)
+        target_name = "telegram_client"
+        channel = None
+        for guild in client.guilds:
+            channel = discord.utils.get(guild.text_channels, name=target_name)
+            if channel:
+                logger.info(f"Found auth channel by name '{target_name}' in guild '{guild.name}'")
+                break
+        
+        # 2. 이름으로 못 찾은 경우만 ID로 채널 찾기 시도
+        if not channel and channel_id:
+            channel = client.get_channel(int(channel_id))
+            if channel:
+                logger.info(f"Using default channel ID: {channel_id}")
+        
+        if channel:
+            await channel.send(f"🔐 **[Telegram Auth]** {prompt}를 입력해주세요.")
+        else:
+            logger.error(f"Could not find Discord channel (Name: telegram_client or ID: {channel_id})")
+            await send_stream.send(None) # 에러 상황 알림
+
+    @client.event
+    async def on_message(message):
+        if message.author.bot:
+            return
+        
+        # 현재 활성화된 채널 확인
+        target_name = "telegram_client"
+        is_auth_channel = False
+        
+        if message.channel.name == target_name:
+            is_auth_channel = True
+        elif channel_id and str(message.channel.id) == str(channel_id):
+            exists_name_channel = any(discord.utils.get(g.text_channels, name=target_name) for g in client.guilds)
+            if not exists_name_channel:
+                is_auth_channel = True
+
+        if not is_auth_channel:
+            return
+        
+        content = message.content.strip()
+        if content:
+            logger.info(f"Received input from Discord: {content}")
+            async with send_stream:
+                await send_stream.send(content)
+            await client.close()
+
+    try:
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(client.start, token)
+            
+            with anyio.fail_after(300.0):
+                async with receive_stream:
+                    result = await receive_stream.receive()
+                    if result is None:
+                        raise RuntimeError("Discord auth channel not found")
+                    return result
+    except TimeoutError:
+        logger.error("Timed out waiting for Discord input.")
+        raise RuntimeError("Discord input timeout")
+    finally:
+        if not client.is_closed():
+            await client.close()
 
 
 class TelegramReadingClient:
@@ -49,21 +136,45 @@ class TelegramReadingClient:
         self.session_path = Path(session_path)
         self.client = TelegramClient(str(self.session_path), self.api_id, self.api_hash)
 
-    async def interactive_login(self) -> None:
-        await self.client.start()
+    async def interactive_login(self, via_discord: bool = False) -> None:
+        """대화형 로그인을 수행합니다. 세션이 없거나 만료된 경우 핸드폰 번호와 코드를 입력받습니다."""
+        logger.info(f"Starting interactive login (via_discord={via_discord})...")
+        
+        if via_discord:
+            await self.client.start(
+                phone=lambda: get_discord_input("핸드폰 번호 (ex: +821012345678)"),
+                code_callback=lambda: get_discord_input("인증 코드 (숫자 5자리)"),
+                password=lambda: get_discord_input("2단계 인증 비밀번호 (설정된 경우만)")
+            )
+        else:
+            await self.client.start()
+            
         me = await self.client.get_me()
-        logger.info(f"Signed in successfully as {getattr(me, 'first_name', None)}")
+        if me:
+            logger.info(f"Signed in successfully as {getattr(me, 'first_name', None)} (ID: {me.id})")
+        else:
+            logger.error("Failed to sign in. Please check your credentials.")
 
-    async def ensure_authorized(self) -> None:
-        await self.client.connect()
+    async def ensure_authorized(self, interactive: bool = False, via_discord: bool = False) -> None:
+        """
+        클라이언트가 연결되어 있고 인증되었는지 확인합니다.
+        interactive=True인 경우 인증되지 않았을 때 로그인을 시도합니다.
+        """
+        if not self.client.is_connected():
+            await self.client.connect()
+
         is_authorized = await self.client.is_user_authorized()
         if is_authorized:
             return
 
-        raise RuntimeError(
-            "Telegram session is not authorized. "
-            "Run login mode once in an interactive terminal to create or refresh the session."
-        )
+        if interactive:
+            logger.warning("Telegram session is not authorized. Starting interactive login...")
+            await self.interactive_login(via_discord=via_discord)
+        else:
+            raise RuntimeError(
+                "Telegram session is not authorized. "
+                "Run login mode once in an interactive terminal to create or refresh the session."
+            )
 
     async def check_session(self) -> bool:
         await self.client.connect()

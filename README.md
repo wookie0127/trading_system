@@ -182,6 +182,52 @@ uv run prefect deploy src/news/daily_news_orchestrator.py:daily_news_summary_flo
   --pool "default-agent-pool"
 ```
 
+### 📰 Gemini CLI 아침 뉴스 브리핑
+
+`docs/codex_news_pipeline.md` 구조를 따라 RSS 헤드라인을 수집하고, Gemini CLI로 요약한 뒤 Obsidian Markdown으로 저장할 수 있습니다.
+Gemini API 키를 코드에서 직접 쓰지 않고, 이미 로그인된 Gemini CLI 세션을 사용합니다.
+
+- 기본 저장 경로: `~/Documents/Obsidian Vault/TradingSystem/뉴스요약/YYYY-MM-DD.md`
+- 기본 모델: `gemini-2.5-flash`
+- 기본 피드: Google News 한국어 종합 / 비즈니스 / 월드 RSS
+
+필수 환경변수:
+
+```bash
+GEMINI_CLI_COMMAND=gemini
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_APPROVAL_MODE=yolo
+GEMINI_TIMEOUT_SECONDS=180
+OBSIDIAN_VAULT_DIR=obsidian
+NEWS_OBSIDIAN_SUBDIR=뉴스요약
+```
+
+사전 준비:
+
+```bash
+gemini
+# 로그인 완료 후 종료
+```
+
+실행 시 Gemini CLI에는 `뉴스요약해줘`로 시작하는 프롬프트와 RSS 헤드라인 목록이 함께 전달됩니다.
+Docker worker에서도 같은 로그인 세션을 쓰기 위해 `docker-compose.yml`에서 호스트의 `${HOME}/.gemini`를 `/root/.gemini`로 마운트합니다.
+
+수동 실행:
+
+```bash
+uv run python src/news/gemini_news_orchestrator.py
+```
+
+Prefect 배포:
+
+```bash
+uv run prefect deploy src/news/gemini_news_orchestrator.py:daily_news_summary_gemini_flow \
+  --name "Daily-News-Summary-Gemini" \
+  --cron "0 7 * * *" \
+  --timezone "Asia/Seoul" \
+  --pool "default-agent-pool"
+```
+
 > **Discord 채널 ID 확인**: 디스코드 → 설정 → 고급 → 개발자 모드 ON → 채널 우클릭 → "채널 ID 복사"
 
 ---
@@ -192,6 +238,16 @@ uv run prefect deploy src/news/daily_news_orchestrator.py:daily_news_summary_flo
 # 특정 종목 소급 수집 (일봉 5년 + 1분봉 30일)
 uv run src/backfill_orchestrator.py --symbol 005930
 uv run src/backfill_orchestrator.py --symbol 005930 --years 10 --days 30
+
+# KOSPI200 전 종목 백필 (일봉 max + 1분봉 최근 28일)
+uv run python src/backfill/market_bulk_backfill.py --market kospi200
+
+# QQQ 백필 (일봉 max + 1분봉 최근 28일)
+uv run python src/backfill/market_bulk_backfill.py --market qqq
+
+# 1분봉만 다시 채우기
+uv run python src/backfill/market_bulk_backfill.py --market kospi200 --skip-daily
+uv run python src/backfill/market_bulk_backfill.py --market qqq --skip-daily
 
 # 오늘 KOSPI 200 전 종목 1분봉 수집 (1회 실행)
 uv run src/daily_intraday_orchestrator.py
@@ -233,12 +289,12 @@ uv run prefect worker start --pool "default-agent-pool"
 
 #### 4단계: 스케줄 배포
 
-매일 오후 4시(KST, 월~금)에 KOSPI 200 데이터를 자동 수집하도록 배포합니다.
+한국시간 기준 새벽 6시 30분(화~토)에 직전 한국장 KOSPI200과 직전 미국장 ETF 바스켓 `SPY / QQQ / IWM / XLK / XLF / TLT / GLD / IBIT` 1분봉을 함께 수집하도록 배포합니다.
 
 ```bash
-uv run prefect deploy src/daily_intraday_orchestrator.py:daily_intraday_flow \
-  --name "KOSPI-Intraday-Daily" \
-  --cron "0 16 * * 1-5" \
+uv run prefect deploy src/pipelines/daily_yahoo_intraday_orchestrator.py:daily_yahoo_intraday_flow \
+  --name "Daily-Yahoo-Intraday" \
+  --cron "30 6 * * 2-6" \
   --timezone "Asia/Seoul" \
   --pool "default-agent-pool"
 
@@ -257,7 +313,7 @@ uv run prefect deploy src/collectors/naver_board/orchestrator.py:naver_board_flo
 uv run prefect deployment ls
 
 # 수동으로 즉시 실행 (테스트용)
-uv run prefect deployment run 'Daily-KOSPI200-Intraday-Flow/KOSPI-Intraday-Daily'
+uv run prefect deployment run 'Daily-Yahoo-Intraday-Flow/Daily-Yahoo-Intraday'
 
 # 네이버 종목 토론방 플로우 즉시 실행 (테스트용)
 uv run prefect deployment run 'Naver-Board-Collection-Flow/Naver-Board-Sync'
