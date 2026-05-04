@@ -5,12 +5,12 @@ Runs in the background, periodically fetching 1-minute candles.
 Usage:
   nohup python -u src/intraday_collector_daemon.py > logs/intraday_daemon.log 2>&1 &
 """
+from __future__ import annotations
+
 import sys as _sys; from pathlib import Path as _Path
 _sys.path.insert(0, str(_Path(__file__).parents[1]))  # src/ 패키지 루트
 del _sys, _Path
 
-
-from __future__ import annotations
 
 import asyncio
 import random

@@ -99,6 +99,8 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+      - ./src:/app/src
+      - ${HOME}/.ssh:/root/.ssh:ro
     command: uvicorn api.api:app --host 0.0.0.0 --port 8000
     working_dir: /app/src
 
@@ -114,6 +116,8 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+      - ./src:/app/src
+      - ${HOME}/.ssh:/root/.ssh:ro
     command: python runners/intraday_collector_daemon.py
     working_dir: /app/src
 
