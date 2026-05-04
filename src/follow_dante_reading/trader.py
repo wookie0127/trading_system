@@ -29,11 +29,17 @@ class DanteTrader:
 
     async def handle_signal(self, signal: ReadingSignal, tg: anyio.abc.TaskGroup | None = None):
         """매매 신호를 처리하고 필요 시 Discord 컨펌을 요청합니다."""
-        if not signal or signal.action == "ignore":
+        # 1. 시그널 요약 다이어리에 기록
+        summary_msg = f"📔 **[Dante Diary]** {signal.company_name or '시황 요약'}\n• 요약: {signal.summary}\n• 판단: {signal.action} (신뢰도: {signal.confidence:.2f})\n• 근거: {signal.rationale_text}"
+        await self.notifier.notify_diary(summary_msg)
+
+        # 2. 매매 액션 처리
+        if signal.action == "ignore":
             return
 
         company = signal.company_name
         if not company:
+            logger.info(f"Signal action is {signal.action} but company name is missing. Skipping trade.")
             return
 
         code = self.market_handler.get_code(company)
@@ -55,21 +61,41 @@ class DanteTrader:
             quantity = 1 
             price = 0
             
+            # 손절가 결정 (시그널에 없으면 기본 -5%)
+            sl_pct = signal.stop_loss_pct if signal.stop_loss_pct else 0.05
+            sl_label = f"{sl_pct*100:.1f}%"
+            
             if self.is_mock:
                 # 모의 투자: 현재가 조회 후 성공 처리
                 price_info = self.market_handler.fetch_price(code)
                 price = int(price_info.get("output", {}).get("stck_prpr", 0))
-                success_msg = f"🍦 **[Mock Buy]** {company} {quantity}주 매수 시뮬레이션 완료 (평균가: {price:,}원)"
+                sl_price = int(price * (1 - sl_pct))
+                
+                success_msg = (
+                    f"🍦 **[Mock Buy]** {company} {quantity}주 매수 완료\n"
+                    f"• 체결가: {price:,}원\n"
+                    f"• 손절라인: {sl_price:,}원 (신호가 기준 {sl_label} 하락 시 자동 매도 예정)"
+                )
                 await self.notifier.notify_all(success_msg)
-                self._save_trade(company, code, quantity, price, "buy")
+                await self.notifier.notify_diary(f"✅ [Mock Buy Success] {company} @ {price:,}원 (SL: {sl_price:,}원)")
+                self._save_trade(company, code, quantity, price, "buy", stop_loss_price=sl_price)
             else:
                 # 실제 투자
                 res = self.market_handler.create_market_buy_order(code, quantity)
                 if res.get("rt_cd") == "0":
                     price = self._extract_price(res)
-                    success_msg = f"✅ **[Buy Success]** {company} {quantity}주 매수 완료 (평균가: {price:,}원)"
+                    sl_price = int(price * (1 - sl_pct))
+                    
+                    success_msg = (
+                        f"✅ **[Buy Success]** {company} {quantity}주 매수 완료\n"
+                        f"• 평균가: {price:,}원\n"
+                        f"• 손절 예약: {sl_price:,}원 ({sl_label}) 설정 완료"
+                    )
                     await self.notifier.notify_all(success_msg)
-                    self._save_trade(company, code, quantity, price, "buy")
+                    await self.notifier.notify_diary(f"✅ [Buy Success] {company} @ {price:,}원 (SL: {sl_price:,}원)")
+                    
+                    # 실제 예약 매도 주문 로직 (KIS API에 따라 구현 필요, 여기서는 기록 후 감시)
+                    self._save_trade(company, code, quantity, price, "buy", stop_loss_price=sl_price)
                 else:
                     fail_msg = f"❌ **[Buy Fail]** {company} 매수 실패: {res.get('msg1')}"
                     await self.notifier.notify_all(fail_msg)
@@ -168,13 +194,14 @@ class DanteTrader:
                 if has_updates:
                     await self.notifier.notify_all(msg)
 
-    def _save_trade(self, company: str, code: str, quantity: int, price: int, action: str):
+    def _save_trade(self, company: str, code: str, quantity: int, price: int, action: str, stop_loss_price: int | None = None):
         trades = self._load_trades()
         if action == "buy":
             trades[code] = {
                 "company": company,
                 "quantity": quantity,
                 "entry_price": price,
+                "stop_loss_price": stop_loss_price,
                 "entry_at": datetime.now().isoformat()
             }
         elif action == "sell":

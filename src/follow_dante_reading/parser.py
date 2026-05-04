@@ -131,10 +131,12 @@ def parse_reading_signal_with_llm(message: ReadingMessage, model: str = "gemini"
 
     prompt = f"""
     아래는 주식 리딩방의 텔레그램 메시지입니다. 
-    이 메시지에서 종목명, 액션(buy_candidate, sell, watch, ignore), 손절가(%), 매수 힌트, 그리고 분석 근거를 추출하여 JSON 형식으로 응답하세요.
+    1. 이 메시지의 핵심 내용을 1~2문장으로 요약하세요. (summary)
+    2. 종목명, 액션(buy_candidate, sell, watch, ignore), 손절가(%), 매수 힌트, 그리고 분석 근거를 추출하여 JSON 형식으로 응답하세요.
     
     [응답 JSON 형식]
     {{
+        "summary": "메시지 핵심 요약",
         "company_name": "종목명",
         "action": "buy_candidate" | "sell" | "watch" | "ignore",
         "stop_loss_pct": "손절가 (예: 5.0)",
@@ -170,6 +172,7 @@ def parse_reading_signal_with_llm(message: ReadingMessage, model: str = "gemini"
             stop_loss_pct=float(data["stop_loss_pct"]) / 100.0 if data.get("stop_loss_pct") else None,
             entry_hint=data.get("entry_hint"),
             rationale_text=data.get("rationale_text") or text[:200],
+            summary=data.get("summary") or text[:100],
             raw_text=message.raw_text,
             media_path=message.media_path,
         )

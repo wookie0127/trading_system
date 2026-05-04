@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import anyio
-import anyio.abc
 from pathlib import Path
 import sys
 import csv
 from datetime import datetime
-from tenacity import AsyncRetrying, wait_exponential, stop_never, retry_if_exception_type, before_sleep_log     
+from tenacity import AsyncRetrying, wait_exponential, stop_never, retry_if_exception_type
 from telethon import events
 
 CURRENT_DIR = Path(__file__).resolve().parent

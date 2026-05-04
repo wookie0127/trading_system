@@ -11,6 +11,10 @@ CURRENT_DIR = Path(__file__).resolve().parent
 KEY_PATH = Path.home() / ".ssh" / "kis"
 load_dotenv(KEY_PATH)
 
+API_KEYS_PATH = Path.home() / ".ssh" / "apikeys"
+if API_KEYS_PATH.exists():
+    load_dotenv(API_KEYS_PATH)
+
 CONFIG_PATH = CURRENT_DIR.parents[1] / "config.yaml"
 config = {}
 if CONFIG_PATH.exists():
@@ -26,6 +30,11 @@ class Notifier:
         self.discord_webhook_url = os.environ.get("DISCORD_WEBHOOK_URL")
         self.discord_token = os.environ.get("DISCORD_TOKEN")
         self.discord_channel_id = os.environ.get("DISCORD_CHANNEL_ID")
+        self.diary_channel_id = os.environ.get("DIARY_CHANNEL_ID", "1500995130604130445")
+        
+        # DISCORD_BOT_TOKEN 명칭 호환성 처리
+        if not self.discord_token:
+            self.discord_token = os.environ.get("DISCORD_BOT_TOKEN")
         
         self.slack_client = WebClient(token=self.slack_token) if self.slack_token else None
 
@@ -41,9 +50,9 @@ class Notifier:
             logger.error(f"Failed to send Slack message: {e}")
             return False
 
-    async def send_discord_async(self, text: str):
-        # 1. Webhook 방식 (우선 적용)
-        if self.discord_webhook_url:
+    async def send_discord_async(self, text: str, channel_id: str | None = None):
+        # 1. Webhook 방식 (channel_id가 없을 때만 사용)
+        if self.discord_webhook_url and not channel_id:
             try:
                 async with httpx.AsyncClient() as client:
                     response = await client.post(self.discord_webhook_url, json={"content": text})
@@ -52,26 +61,33 @@ class Notifier:
                     return True
             except Exception as e:
                 logger.error(f"Failed to send Discord message via Webhook: {e}")
-                return False
                 
-        # 2. Bot REST API 방식 (가이드에 따라 봇을 생성했을 경우)
-        if self.discord_token and self.discord_channel_id:
+        # 2. Bot REST API 방식
+        target_channel = channel_id or self.discord_channel_id
+        if self.discord_token and target_channel:
             try:
-                # 봇의 경우 token 앞에 "Bot " 접두사를 붙여야 합니다.
                 headers = {"Authorization": f"Bot {self.discord_token}"}
-                url = f"https://discord.com/api/v10/channels/{self.discord_channel_id}/messages"
+                url = f"https://discord.com/api/v10/channels/{target_channel}/messages"
                 
                 async with httpx.AsyncClient() as client:
                     response = await client.post(url, headers=headers, json={"content": text})
                     response.raise_for_status()
-                    logger.info("Discord message sent via Bot REST API.")
+                    logger.info(f"Discord message sent to channel {target_channel}.")
                     return True
             except Exception as e:
-                logger.error(f"Failed to send Discord message via Bot REST API: {e}")
+                logger.error(f"Failed to send Discord message to {target_channel}: {e}")
                 return False
 
-        logger.warning("Discord notification skipped: Both Webhook URL and Bot Token/Channel ID are missing.")
+        logger.warning("Discord notification skipped: Missing credentials or channel ID.")
         return False
+
+    async def notify_diary(self, text: str):
+        """#dante_invest_diary 채널에 기록합니다."""
+        if self.diary_channel_id:
+            await self.send_discord_async(text, channel_id=self.diary_channel_id)
+        else:
+            # 다이어리 채널이 없으면 기본 채널로 전송
+            await self.send_discord_async(f"📔 **[Diary]** {text}")
 
     async def notify_all(self, text: str):
         """Slack과 Discord 양쪽으로 알림 전송"""

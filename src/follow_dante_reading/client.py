@@ -28,11 +28,15 @@ TELEGRAM_ENV_PATH = Path.home() / ".ssh" / "telegram"
 load_dotenv(TELEGRAM_ENV_PATH)
 load_dotenv(CURRENT_DIR.parents[2] / ".env")
 
+API_KEYS_PATH = Path.home() / ".ssh" / "apikeys"
+if API_KEYS_PATH.exists():
+    load_dotenv(API_KEYS_PATH)
+
 SESSION_BASENAME = CURRENT_DIR / "test_check"
 
 async def get_discord_input(prompt: str) -> str:
     """Discord 채널로부터 입력을 대기합니다."""
-    token = os.environ.get("DISCORD_TOKEN")
+    token = os.environ.get("DISCORD_TOKEN") or os.environ.get("DISCORD_BOT_TOKEN")
     channel_id = os.environ.get("DISCORD_CHANNEL_ID")
     
     if not token or not channel_id:

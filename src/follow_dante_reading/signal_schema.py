@@ -51,6 +51,7 @@ class ReadingSignal:
     stop_loss_pct: float | None
     entry_hint: str | None
     rationale_text: str
+    summary: str
     raw_text: str
     media_path: str | None = None
 
