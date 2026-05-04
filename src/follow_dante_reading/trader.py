@@ -21,6 +21,7 @@ class DanteTrader:
         self.market_handler = MarketHandler()
         self.notifier = notifier or Notifier()
         self.active_trades_path = project_root() / "data" / "follow_dante_reading" / "active_trades.json"
+        self.trade_history_path = project_root() / "data" / "follow_dante_reading" / "trade_history.json"
         self.active_trades_path.parent.mkdir(parents=True, exist_ok=True)
         self.stop_loss_limit = -0.05  # -5%
         self.is_mock = is_mock
@@ -131,6 +132,13 @@ class DanteTrader:
                     price = self._extract_price(res)
                     success_msg = f"✅ **[Sell Success]** {company} {quantity}주 전량 매도 완료 (매도가: {price:,}원)"
                     await self.notifier.notify_all(success_msg)
+                    
+                    # 매도 성공 시 이력 저장 (실현 손익 계산 포함)
+                    entry_price = active_trades[code]["entry_price"]
+                    pnl = (price - entry_price) * quantity
+                    pnl_rate = (price - entry_price) / entry_price
+                    self._save_history(company, code, quantity, entry_price, price, pnl, pnl_rate)
+                    
                     self._save_trade(company, code, quantity, price, "sell")
                 else:
                     fail_msg = f"❌ **[Sell Fail]** {company} 매도 실패: {res.get('msg1')}"
@@ -193,6 +201,72 @@ class DanteTrader:
 
                 if has_updates:
                     await self.notifier.notify_all(msg)
+
+    async def get_status_report(self) -> str:
+        """현재 계좌 상태와 매매 현황을 요약한 리포트를 생성합니다."""
+        # 1. 예수금 조회
+        balance_info = self.market_handler.fetch_balance()
+        cash = int(balance_info.get("output2", [{}])[0].get("dnca_tot_amt", 0)) if not self.is_mock else 10000000 # 모의는 1천만 시작 가정
+        
+        report = f"💰 **[Account Status]**\n• **예수금**: {cash:,}원\n\n"
+        
+        # 2. 보유 종목 현황
+        active_trades = self._load_trades()
+        if active_trades:
+            report += "📂 **현재 보유 종목**\n"
+            total_eval = 0
+            for code, data in active_trades.items():
+                price_info = self.market_handler.fetch_price(code)
+                curr_price = int(price_info.get("output", {}).get("stck_prpr", 0))
+                eval_pnl = (curr_price - data['entry_price']) * data['quantity']
+                eval_rate = (curr_price - data['entry_price']) / data['entry_price']
+                total_eval += curr_price * data['quantity']
+                
+                emoji = "📈" if eval_pnl >= 0 else "📉"
+                report += f"• {data['company']}: {curr_price:,}원 ({emoji} {eval_rate*100:+.2f}%, {eval_pnl:+,}원)\n"
+            report += f"  (보유종목 총 평가액: {total_eval:,}원)\n\n"
+        else:
+            report += "📂 **현재 보유 종목**: 없음\n\n"
+            
+        # 3. 실현 손익 (매매 이력 기반)
+        history = self._load_history()
+        if history:
+            report += "🏁 **최근 실현 손익 (History)**\n"
+            total_pnl = 0
+            # 최근 10개까지만 표시
+            for item in history[-10:]:
+                total_pnl += item['pnl']
+                emoji = "🔥" if item['pnl'] >= 0 else "🧊"
+                report += f"• {item['company']}: {item['pnl_rate']*100:+.2f}% ({item['pnl']:+,}원)\n"
+            report += f"**▶️ 누적 실현 손익**: {total_pnl:+,}원"
+        else:
+            report += "🏁 **최근 실현 손익**: 이력 없음"
+            
+        return report
+
+    def _save_history(self, company: str, code: str, quantity: int, buy_price: int, sell_price: int, pnl: int, pnl_rate: float):
+        history = self._load_history()
+        history.append({
+            "company": company,
+            "code": code,
+            "quantity": quantity,
+            "buy_price": buy_price,
+            "sell_price": sell_price,
+            "pnl": pnl,
+            "pnl_rate": pnl_rate,
+            "closed_at": datetime.now().isoformat()
+        })
+        with open(self.trade_history_path, "w", encoding="utf-8") as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+
+    def _load_history(self) -> list:
+        if not self.trade_history_path.exists():
+            return []
+        try:
+            with open(self.trade_history_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
 
     def _save_trade(self, company: str, code: str, quantity: int, price: int, action: str, stop_loss_price: int | None = None):
         trades = self._load_trades()

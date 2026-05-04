@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import anyio
+import os
 from pathlib import Path
 import sys
 import csv
@@ -17,6 +18,7 @@ import fire
 from loguru import logger
 
 from bots.notifier import Notifier
+import discord
 from follow_dante_reading.client import TelegramReadingClient
 from follow_dante_reading.config import CHAT_CONFIG_PATH, load_chat_aliases, resolve_chat_reference
 from follow_dante_reading.parser import parse_reading_signal, parse_reading_signal_with_llm
@@ -154,8 +156,9 @@ class DanteReadingOrchestrator:
             await self.notifier.notify_all(start_msg)
 
         async with anyio.create_task_group() as tg:
-            # 수익률 트래킹 루프 시작
+            # 수익률 트래킹 루프 및 Discord 커맨드 루프 시작
             tg.start_soon(self.trader.track_holdings_loop, tg)
+            tg.start_soon(self._run_discord_command_loop)
 
             # tenacity를 이용한 리스너 재시도 로직
             async for attempt in AsyncRetrying(
@@ -286,6 +289,46 @@ class DanteReadingOrchestrator:
             f"Logging configured. file={self.logs_dir / 'listener.log'} "
             f"chat_config={CHAT_CONFIG_PATH}"
         )
+
+    async def _run_discord_command_loop(self):
+        """Discord 명령어를 처리하는 루프입니다."""
+        token = os.environ.get("DISCORD_TOKEN") or os.environ.get("DISCORD_BOT_TOKEN")
+        if not token:
+            logger.warning("Discord token missing. Command handler will not start.")
+            return
+
+        intents = discord.Intents.default()
+        intents.message_content = True
+        client = discord.Client(intents=intents)
+
+        @client.event
+        async def on_ready():
+            logger.info("Discord Command Handler is ready.")
+
+        @client.event
+        async def on_message(message):
+            if message.author.bot:
+                return
+            
+            content = message.content.strip().lower()
+            if content in ["status", "!status", "현황", "계좌"]:
+                logger.info(f"Received status command from {message.author}")
+                try:
+                    report = await self.trader.get_status_report()
+                    await message.channel.send(report)
+                except Exception as e:
+                    logger.error(f"Error generating status report: {e}")
+                    await message.channel.send(f"❌ 현황 조회 중 오류가 발생했습니다: {e}")
+
+        try:
+            await client.start(token)
+        except anyio.get_cancelled_exc_class():
+            raise
+        except Exception as e:
+            logger.error(f"Error in Discord command loop: {e}")
+        finally:
+            if not client.is_closed():
+                await client.close()
 
 
 def main(
