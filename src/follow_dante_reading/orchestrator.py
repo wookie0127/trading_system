@@ -319,6 +319,17 @@ class DanteReadingOrchestrator:
                 except Exception as e:
                     logger.error(f"Error generating status report: {e}")
                     await message.channel.send(f"❌ 현황 조회 중 오류가 발생했습니다: {e}")
+            
+            elif content in ["help", "!help", "도움말", "도움"]:
+                help_text = (
+                    "🤖 **[Dante Bot 명령어 안내]**\n\n"
+                    "• `!status` (현황, 계좌): 현재 예수금, 보유 종목 수익률, 실현 손익 요약\n"
+                    "• `!help` (도움말): 현재 보고 계신 명령어 가이드 표시\n\n"
+                    "💡 **매매 승인 프로세스**\n"
+                    "텔레그램 신호 포착 시 승인 요청 메시지가 발송됩니다.\n"
+                    "해당 메시지에 `y`, `네`, `매수` 등으로 답장하면 실제/모의 매매가 집행됩니다."
+                )
+                await message.channel.send(help_text)
 
         try:
             await client.start(token)
