@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import anyio
 import os
 from pathlib import Path
@@ -160,6 +158,16 @@ class DanteReadingOrchestrator:
             tg.start_soon(self.trader.track_holdings_loop, tg)
             tg.start_soon(self._run_discord_command_loop)
 
+            # 텔레그램 이벤트 핸들러 정의
+            async def _handler(event):
+                logger.info(f"🔥 [EVENT] New Telegram message detected (ID: {event.message.id})")
+                parsed = await self.client._to_reading_message(event.message, download_media, self.store.attachments_dir)
+                if parsed:
+                    logger.info(f"✅ [PARSED] Message {parsed.message_id} converted to ReadingMessage")
+                    tg.start_soon(self._process_message, parsed, notify, tg)
+                else:
+                    logger.warning(f"⚠️ [SKIP] Failed to convert message {event.message.id} to ReadingMessage")
+
             # tenacity를 이용한 리스너 재시도 로직
             async for attempt in AsyncRetrying(
                 wait=wait_exponential(multiplier=1, min=retry_delay_seconds, max=60),
@@ -169,14 +177,15 @@ class DanteReadingOrchestrator:
             ):
                 with attempt:
                     try:
+                        # 기존 핸들러가 있다면 제거 (중복 방지)
+                        self.client.client.remove_event_handler(_handler)
+
                         await self.client.ensure_authorized()
                         entity = await self.client.resolve_entity(resolved_chat)
+                        logger.info(f"🔍 Resolved entity for {resolved_chat}: ID={getattr(entity, 'id', 'N/A')} Type={type(entity).__name__}")
 
-                        @self.client.client.on(events.NewMessage(chats=entity))
-                        async def _handler(event):
-                            parsed = await self.client._to_reading_message(event.message, download_media, self.store.attachments_dir)
-                            if parsed:
-                                tg.start_soon(self._process_message, parsed, notify, tg)
+                        # 핸들러 등록
+                        self.client.client.add_event_handler(_handler, events.NewMessage(chats=entity))
 
                         logger.info(f"Listening for new Telegram messages from: {resolved_chat}")
                         await self.client.client.run_until_disconnected()
@@ -214,27 +223,32 @@ class DanteReadingOrchestrator:
         # Discord 알림은 너무 빈번할 수 있으므로 로그만 남기거나 선택적으로 전송
 
     async def _process_message(self, message, notify: bool, tg: anyio.abc.TaskGroup | None = None):
+        logger.info(f"📩 New message received: id={message.message_id} from={message.chat_title}")
         self.store.save_message(message)
+
+        # 1. 원문 수신 알림 (디버깅용)
+        if notify:
+            raw_msg = f"📩 **[Telegram Received]**\n• Chat: {message.chat_title}\n• Text: {message.text[:300]}"
+            await self.notifier.notify_diary(raw_msg)
 
         if self.use_llm:
             signal = parse_reading_signal_with_llm(message)
         else:
             signal = parse_reading_signal(message)
 
-        logger.info(
-            f"Captured message id={message.message_id} chat_id={message.chat_id} "
-            f"title={message.chat_title} has_media={message.has_media}"
-        )
-        if not signal or signal.action == "ignore":
+        if not signal:
+            logger.warning(f"Failed to parse signal for message {message.message_id}")
             return None
 
         self.store.save_signal(signal)
         logger.info(
             f"Parsed signal: action={signal.action} company={signal.company_name} "
-            f"stop_loss={signal.stop_loss_pct}"
+            f"summary_len={len(signal.summary) if signal.summary else 0}"
         )
-        if notify:
-            await self.notifier.notify_all(self._format_signal(signal))
+
+        # 2. 파싱된 신호 알림 (ignore가 아닐 때만)
+        if signal.action != "ignore" and notify:
+            await self.notifier.notify_diary(self._format_signal(signal))
 
         # 매매 신호 처리 (트레이더 호출, TaskGroup 전달)
         await self.trader.handle_signal(signal, tg=tg)
@@ -309,7 +323,7 @@ class DanteReadingOrchestrator:
         async def on_message(message):
             if message.author.bot:
                 return
-            
+
             content = message.content.strip().lower()
             if content in ["status", "!status", "현황", "계좌"]:
                 logger.info(f"Received status command from {message.author}")
@@ -319,7 +333,7 @@ class DanteReadingOrchestrator:
                 except Exception as e:
                     logger.error(f"Error generating status report: {e}")
                     await message.channel.send(f"❌ 현황 조회 중 오류가 발생했습니다: {e}")
-            
+
             elif content in ["help", "!help", "도움말", "도움"]:
                 help_text = (
                     "🤖 **[Dante Bot 명령어 안내]**\n\n"

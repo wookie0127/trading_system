@@ -1,11 +1,11 @@
-from __future__ import annotations
-
 import re
 import json
+import os
 import subprocess
+from pathlib import Path
 from loguru import logger
 
-from follow_dante_reading.signal_schema import ReadingMessage, ReadingSignal
+from follow_dante_reading.signal_schema import ReadingMessage, ReadingSignal  
 
 
 STOP_LOSS_PATTERN = re.compile(r"(-?\d+(?:\.\d+)?)\s*%\s*손절")
@@ -59,6 +59,7 @@ def parse_reading_signal(message: ReadingMessage) -> ReadingSignal | None:
         stop_loss_pct=stop_loss_pct,
         entry_hint=_infer_entry_hint(text),
         rationale_text=text,
+        summary=text[:100].replace("\n", " "), # 룰 기반 요약 (첫 100자)
         raw_text=message.raw_text,
         media_path=message.media_path,
     )
@@ -129,10 +130,16 @@ def parse_reading_signal_with_llm(message: ReadingMessage, model: str = "gemini"
     if not text:
         return None
 
+    cli_command = os.getenv("GEMINI_CLI_COMMAND", model).strip() or model
+    gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    approval_mode = os.getenv("GEMINI_APPROVAL_MODE", "yolo")
+    timeout_seconds = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "30"))
+
     prompt = f"""
     아래는 주식 리딩방의 텔레그램 메시지입니다. 
     1. 이 메시지의 핵심 내용을 1~2문장으로 요약하세요. (summary)
     2. 종목명, 액션(buy_candidate, sell, watch, ignore), 손절가(%), 매수 힌트, 그리고 분석 근거를 추출하여 JSON 형식으로 응답하세요.
+    3. 응답은 반드시 JSON만 출력하세요. 코드블록이나 설명 문장은 금지합니다.
     
     [응답 JSON 형식]
     {{
@@ -150,15 +157,34 @@ def parse_reading_signal_with_llm(message: ReadingMessage, model: str = "gemini"
     """
 
     try:
-        # 사용자가 CLI를 사용 중이라고 했으므로, subprocess로 CLI 호출
-        # (실제 환경의 명령어에 맞게 수정 필요. 예: 'gemini "..."')
-        cmd = [model, prompt] 
-        
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        cmd = [
+            cli_command,
+            "--prompt", prompt,
+            "--approval-mode", approval_mode,
+            "--output-format", "text",
+            "--skip-trust",
+            "--model", gemini_model
+        ]
+
+        # ~/.gemini 디렉토리가 있으면 그곳에서 실행 (기존 오케스트레이터 방식)
+        gemini_home = Path.home() / ".gemini"
+        run_cwd = gemini_home if gemini_home.exists() else Path.cwd()
+
+        # 30초 타임아웃 추가하여 무한 대기 방지
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+            cwd=run_cwd
+        )
         llm_out = result.stdout.strip()
-        
+        logger.debug(f"Gemini output: {llm_out}")
+
         json_str = _extract_json(llm_out)
         data = json.loads(json_str)
+        stop_loss_pct = _coerce_stop_loss_pct(data.get("stop_loss_pct"))
 
         return ReadingSignal(
             source=message.source,
@@ -168,8 +194,8 @@ def parse_reading_signal_with_llm(message: ReadingMessage, model: str = "gemini"
             chat_title=message.chat_title,
             company_name=data.get("company_name"),
             action=data.get("action", "ignore"),
-            confidence=data.get("confidence", 0.5),
-            stop_loss_pct=float(data["stop_loss_pct"]) / 100.0 if data.get("stop_loss_pct") else None,
+            confidence=float(data.get("confidence", 0.5)),
+            stop_loss_pct=stop_loss_pct,
             entry_hint=data.get("entry_hint"),
             rationale_text=data.get("rationale_text") or text[:200],
             summary=data.get("summary") or text[:100],
@@ -192,3 +218,17 @@ def _extract_json(text: str) -> str:
         return match.group(1)
     return text
 
+
+def _coerce_stop_loss_pct(raw_value) -> float | None:
+    if raw_value in (None, "", "null"):
+        return None
+
+    if isinstance(raw_value, str):
+        normalized = raw_value.strip().replace("%", "")
+    else:
+        normalized = str(raw_value)
+
+    try:
+        return float(normalized) / 100.0
+    except (TypeError, ValueError):
+        return None

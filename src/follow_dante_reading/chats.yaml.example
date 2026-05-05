@@ -1,6 +1,9 @@
 chats:
-  dante:
+  cafe_share:
     chat_id: 3875818348
     username:
-    title: "Dante Reading Room"
-
+    title: "[N]카페 정보공유 소통채널"
+  bot_test:
+    chat_id: -1003802436601
+    username:
+    title: "bot_test"
