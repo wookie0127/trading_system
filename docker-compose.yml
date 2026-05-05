@@ -69,6 +69,7 @@ services:
       TRADING_DATABASE_URL: postgresql://prefect:prefect@postgres:5432/prefect
       PYTHONPATH: /app/src
       NEWS_OBSIDIAN_SUBDIR: 뉴스요약
+      GEMINI_CLI_TRUST_WORKSPACE: "true"
     env_file:
       - path: .env
         required: false
@@ -128,6 +129,7 @@ services:
     environment:
       - PYTHONPATH=/app/src
       - PYTHONUNBUFFERED=1
+      - GEMINI_CLI_TRUST_WORKSPACE=true
     env_file:
       - path: .env
         required: false
@@ -137,8 +139,8 @@ services:
       - ./src:/app/src
       - ./config.yaml:/app/config.yaml:ro
       - ${HOME}/.ssh:/root/.ssh:ro
-      - ${HOME}/.gemini:/root/.gemini:ro
-    command: python src/follow_dante_reading/orchestrator.py serve --chat dante --mock --notify --use_llm
+      - ${HOME}/.gemini:/root/.gemini
+    command: python src/follow_dante_reading/orchestrator.py serve --chat cafe_share --mock --notify --use_llm
     working_dir: /app
 
 volumes:
