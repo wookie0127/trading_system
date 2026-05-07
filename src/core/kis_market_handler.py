@@ -53,8 +53,8 @@ class MarketHandler(KISAuthHandler):
         self.exchange = exchange
 
         # 계좌 설정 (8자리-2자리 분리)
-        cano = os.getenv("KIS_CANO", "")
-        prdt_cd = os.getenv("KIS_ACNT_PRDT_CD", "01")
+        cano = self.account_number
+        prdt_cd = self.account_product_code
 
         if "-" in cano:
             self.acc_no_prefix = cano.split("-")[0]
@@ -62,6 +62,9 @@ class MarketHandler(KISAuthHandler):
         else:
             self.acc_no_prefix = cano
             self.acc_no_postfix = prdt_cd.zfill(2)
+
+        if not self.acc_no_prefix:
+            logger.warning("No KIS account number configured for profile={}", self.credential_profile)
 
     def get_code(self, company_name: str) -> str | None:
         """종목명으로 종목 코드 찾기"""

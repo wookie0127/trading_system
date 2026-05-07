@@ -1,11 +1,8 @@
-from __future__ import annotations
-
 import anyio
 import anyio.abc
 import json
 import os
 from datetime import datetime
-from pathlib import Path
 
 from loguru import logger
 from tenacity import AsyncRetrying, wait_exponential, stop_after_attempt, retry_if_exception_type
@@ -23,10 +20,21 @@ class DanteTrader:
         self.active_trades_path = project_root() / "data" / "follow_dante_reading" / "active_trades.json"
         self.trade_history_path = project_root() / "data" / "follow_dante_reading" / "trade_history.json"
         self.active_trades_path.parent.mkdir(parents=True, exist_ok=True)
-        self.stop_loss_limit = -0.05  # -5%
         self.is_mock = is_mock
+        self.default_stop_loss_pct = float(os.getenv("DANTE_DEFAULT_STOP_LOSS_PCT", "0.05"))
+        self.order_quantity = int(os.getenv("DANTE_ORDER_QUANTITY", "1"))
+        self.holdings_poll_seconds = int(os.getenv("DANTE_HOLDINGS_POLL_SECONDS", "300"))
+        self.auto_stop_loss_enabled = os.getenv("DANTE_AUTO_STOP_LOSS_ENABLED", "true").lower() == "true"
         if self.is_mock:
             logger.info("DanteTrader initialized in MOCK MODE (No real trades)")
+        logger.info(
+            "DanteTrader config: "
+            f"order_quantity={self.order_quantity}, "
+            f"default_stop_loss_pct={self.default_stop_loss_pct:.4f}, "
+            f"holdings_poll_seconds={self.holdings_poll_seconds}, "
+            f"auto_stop_loss_enabled={self.auto_stop_loss_enabled}, "
+            f"is_mock={self.is_mock}"
+        )
 
     async def handle_signal(self, signal: ReadingSignal, tg: anyio.abc.TaskGroup | None = None):
         """매매 신호를 처리하고 필요 시 Discord 컨펌을 요청합니다."""
@@ -49,29 +57,38 @@ class DanteTrader:
             return
 
         if signal.action == "buy_candidate":
+            active_trades = self._load_trades()
+            if code in active_trades:
+                logger.info(f"{company}({code}) is already in active trades. Skipping duplicate buy.")
+                return
             await self._confirm_and_buy(company, code, signal)
         elif signal.action == "sell":
             await self._confirm_and_sell(company, code, signal)
 
     async def _confirm_and_buy(self, company: str, code: str, signal: ReadingSignal):
         """매수 컨펌 및 실행"""
-        prompt = f"📢 **[Trade Confirm]** '{company}'({code})를 매수할까요? (신뢰도: {signal.confidence:.2f})\n• 원문: {signal.rationale_text[:100]}..."
+        prompt = (
+            f"📢 **[Trade Confirm]** '{company}'({code})를 매수할까요? "
+            f"(신뢰도: {signal.confidence:.2f})\n"
+            f"• 응답: `buy` 또는 `skip` (`y`/`yes`도 가능)\n"
+            f"• 원문: {signal.rationale_text[:100]}..."
+        )
         answer = await get_discord_input(prompt)
-        
-        if answer.lower() in ["y", "yes", "네", "ㅇㅇ", "ok", "매수"]:
-            quantity = 1 
+
+        if self._is_trade_confirmed(answer, expected_action="buy"):
+            quantity = self.order_quantity
             price = 0
-            
-            # 손절가 결정 (시그널에 없으면 기본 -5%)
-            sl_pct = signal.stop_loss_pct if signal.stop_loss_pct else 0.05
+
+            # 손절가 결정
+            sl_pct = signal.stop_loss_pct if signal.stop_loss_pct is not None else self.default_stop_loss_pct
             sl_label = f"{sl_pct*100:.1f}%"
-            
+
             if self.is_mock:
                 # 모의 투자: 현재가 조회 후 성공 처리
                 price_info = self.market_handler.fetch_price(code)
                 price = int(price_info.get("output", {}).get("stck_prpr", 0))
                 sl_price = int(price * (1 - sl_pct))
-                
+
                 success_msg = (
                     f"🍦 **[Mock Buy]** {company} {quantity}주 매수 완료\n"
                     f"• 체결가: {price:,}원\n"
@@ -86,7 +103,7 @@ class DanteTrader:
                 if res.get("rt_cd") == "0":
                     price = self._extract_price(res)
                     sl_price = int(price * (1 - sl_pct))
-                    
+
                     success_msg = (
                         f"✅ **[Buy Success]** {company} {quantity}주 매수 완료\n"
                         f"• 평균가: {price:,}원\n"
@@ -94,7 +111,7 @@ class DanteTrader:
                     )
                     await self.notifier.notify_all(success_msg)
                     await self.notifier.notify_diary(f"✅ [Buy Success] {company} @ {price:,}원 (SL: {sl_price:,}원)")
-                    
+
                     # 실제 예약 매도 주문 로직 (KIS API에 따라 구현 필요, 여기서는 기록 후 감시)
                     self._save_trade(company, code, quantity, price, "buy", stop_loss_price=sl_price)
                 else:
@@ -111,13 +128,17 @@ class DanteTrader:
             logger.info(f"Signal to sell {company}, but not in active trades.")
             return
 
-        prompt = f"📢 **[Trade Confirm]** 보유 중인 '{company}'({code})를 매도할까요?\n• 원문: {signal.rationale_text[:100]}..."
+        prompt = (
+            f"📢 **[Trade Confirm]** 보유 중인 '{company}'({code})를 매도할까요?\n"
+            f"• 응답: `sell` 또는 `skip` (`y`/`yes`도 가능)\n"
+            f"• 원문: {signal.rationale_text[:100]}..."
+        )
         answer = await get_discord_input(prompt)
-        
-        if answer.lower() in ["y", "yes", "네", "ㅇㅇ", "ok", "매도", "정리"]:
+
+        if self._is_trade_confirmed(answer, expected_action="sell"):
             quantity = active_trades[code]["quantity"]
             price = 0
-            
+
             if self.is_mock:
                 # 모의 투자: 현재가 조회 후 성공 처리
                 price_info = self.market_handler.fetch_price(code)
@@ -132,13 +153,13 @@ class DanteTrader:
                     price = self._extract_price(res)
                     success_msg = f"✅ **[Sell Success]** {company} {quantity}주 전량 매도 완료 (매도가: {price:,}원)"
                     await self.notifier.notify_all(success_msg)
-                    
+
                     # 매도 성공 시 이력 저장 (실현 손익 계산 포함)
                     entry_price = active_trades[code]["entry_price"]
                     pnl = (price - entry_price) * quantity
                     pnl_rate = (price - entry_price) / entry_price
                     self._save_history(company, code, quantity, entry_price, price, pnl, pnl_rate)
-                    
+
                     self._save_trade(company, code, quantity, price, "sell")
                 else:
                     fail_msg = f"❌ **[Sell Fail]** {company} 매도 실패: {res.get('msg1')}"
@@ -146,16 +167,33 @@ class DanteTrader:
         else:
             await self.notifier.notify_all(f"🚫 {company} 매도를 거절하셨습니다.")
 
+    @staticmethod
+    def _is_trade_confirmed(answer: str, expected_action: str) -> bool:
+        normalized = answer.strip().lower()
+        if not normalized:
+            return False
+
+        if normalized in {"skip", "n", "no", "아니오", "거절", "패스"}:
+            return False
+
+        if expected_action == "buy":
+            return normalized in {"buy", "b", "y", "yes", "네", "ㅇㅇ", "ok", "매수"}
+
+        if expected_action == "sell":
+            return normalized in {"sell", "s", "y", "yes", "네", "ㅇㅇ", "ok", "매도", "정리"}
+
+        return False
+
     async def track_holdings_loop(self, tg: anyio.abc.TaskGroup):
-        """1시간마다 보유 주식 현황을 트래킹하고 보고합니다."""
-        logger.info("Starting holdings tracking loop (Interval: 1 hour)")
+        """주기적으로 보유 주식 현황과 손절 트리거를 체크합니다."""
+        logger.info(f"Starting holdings tracking loop (Interval: {self.holdings_poll_seconds} seconds)")
         while True:
             try:
                 await self.report_holdings(tg)
             except Exception as e:
                 logger.error(f"Error in tracking loop: {e}")
-            
-            await anyio.sleep(3600)  # 1시간 대기 (anyio.sleep 사용)
+
+            await anyio.sleep(self.holdings_poll_seconds)
 
     async def report_holdings(self, tg: anyio.abc.TaskGroup):
         """현재 보유 종목의 수익률 현황을 Discord로 보고합니다."""
@@ -182,22 +220,38 @@ class DanteTrader:
 
                     entry_price = data["entry_price"]
                     profit_rate = (current_price - entry_price) / entry_price
-                    
+                    stop_loss_price = int(data.get("stop_loss_price") or 0)
+
                     status_emoji = "📈" if profit_rate > 0 else "📉"
-                    msg += f"• {data['company']}: {current_price:,}원 ({status_emoji} {profit_rate*100:+.2f}%)\n"
+                    stop_loss_suffix = f", SL {stop_loss_price:,}원" if stop_loss_price > 0 else ""
+                    msg += (
+                        f"• {data['company']}: {current_price:,}원 "
+                        f"({status_emoji} {profit_rate*100:+.2f}%{stop_loss_suffix})\n"
+                    )
                     has_updates = True
 
-                    # 손절라인 체크 (-5%)
-                    if profit_rate <= self.stop_loss_limit:
-                        alert_msg = f"⚠️ **[Stop Loss Alert]** {data['company']} 수익률이 {profit_rate*100:.2f}%에 도달했습니다. (손절 라인 -5% 하회)"
+                    stop_loss_pending = bool(data.get("stop_loss_pending"))
+                    threshold_price = stop_loss_price or int(entry_price * (1 - self.default_stop_loss_pct))
+
+                    if self.auto_stop_loss_enabled and threshold_price > 0 and current_price <= threshold_price:
+                        if stop_loss_pending:
+                            continue
+
+                        alert_msg = (
+                            f"⚠️ **[Stop Loss Triggered]** {data['company']} 현재가 {current_price:,}원이 "
+                            f"손절 라인 {threshold_price:,}원 이하에 도달했습니다."
+                        )
                         await self.notifier.notify_all(alert_msg)
-                        
-                        # 손절 매도 컨펌을 별도 태스크로 실행
-                        tg.start_soon(self._confirm_and_sell, data['company'], code, ReadingSignal(
-                            source="auto:stop_loss", message_id=0, posted_at=datetime.now(), 
-                            chat_id=0, company_name=data['company'], action="sell", confidence=1.0, 
-                            rationale_text="손절가 도달에 따른 자동 매도 제안"
-                        ))
+                        self._mark_trade_stop_loss_pending(code, True, current_price)
+
+                        tg.start_soon(
+                            self._execute_stop_loss_sell,
+                            data["company"],
+                            code,
+                            data["quantity"],
+                            entry_price,
+                            current_price,
+                        )
 
                 if has_updates:
                     await self.notifier.notify_all(msg)
@@ -207,9 +261,9 @@ class DanteTrader:
         # 1. 예수금 조회
         balance_info = self.market_handler.fetch_balance()
         cash = int(balance_info.get("output2", [{}])[0].get("dnca_tot_amt", 0)) if not self.is_mock else 10000000 # 모의는 1천만 시작 가정
-        
+
         report = f"💰 **[Account Status]**\n• **예수금**: {cash:,}원\n\n"
-        
+
         # 2. 보유 종목 현황
         active_trades = self._load_trades()
         if active_trades:
@@ -221,13 +275,18 @@ class DanteTrader:
                 eval_pnl = (curr_price - data['entry_price']) * data['quantity']
                 eval_rate = (curr_price - data['entry_price']) / data['entry_price']
                 total_eval += curr_price * data['quantity']
-                
+                stop_loss_price = int(data.get("stop_loss_price") or 0)
+
                 emoji = "📈" if eval_pnl >= 0 else "📉"
-                report += f"• {data['company']}: {curr_price:,}원 ({emoji} {eval_rate*100:+.2f}%, {eval_pnl:+,}원)\n"
+                stop_loss_suffix = f", SL {stop_loss_price:,}원" if stop_loss_price > 0 else ""
+                report += (
+                    f"• {data['company']}: {curr_price:,}원 "
+                    f"({emoji} {eval_rate*100:+.2f}%, {eval_pnl:+,}원{stop_loss_suffix})\n"
+                )
             report += f"  (보유종목 총 평가액: {total_eval:,}원)\n\n"
         else:
             report += "📂 **현재 보유 종목**: 없음\n\n"
-            
+
         # 3. 실현 손익 (매매 이력 기반)
         history = self._load_history()
         if history:
@@ -241,7 +300,7 @@ class DanteTrader:
             report += f"**▶️ 누적 실현 손익**: {total_pnl:+,}원"
         else:
             report += "🏁 **최근 실현 손익**: 이력 없음"
-            
+
         return report
 
     def _save_history(self, company: str, code: str, quantity: int, buy_price: int, sell_price: int, pnl: int, pnl_rate: float):
@@ -268,6 +327,52 @@ class DanteTrader:
         except Exception:
             return []
 
+    async def _execute_stop_loss_sell(
+        self,
+        company: str,
+        code: str,
+        quantity: int,
+        entry_price: int,
+        current_price: float,
+    ):
+        """손절 라인 도달 시 사용자 확인 없이 시장가 매도를 실행합니다."""
+        try:
+            if self.is_mock:
+                price = int(current_price)
+                success_msg = (
+                    f"🍦 **[Mock Stop Loss Sell]** {company} {quantity}주 자동 손절 시뮬레이션 완료 "
+                    f"(매도가: {price:,}원)"
+                )
+                await self.notifier.notify_all(success_msg)
+                await self.notifier.notify_diary(f"✅ [Mock Stop Loss] {company} @ {price:,}원")
+                pnl = (price - entry_price) * quantity
+                pnl_rate = (price - entry_price) / entry_price
+                self._save_history(company, code, quantity, entry_price, price, pnl, pnl_rate)
+                self._save_trade(company, code, quantity, price, "sell")
+                return
+
+            res = self.market_handler.create_market_sell_order(code, quantity)
+            if res.get("rt_cd") == "0":
+                price = self._extract_price(res) or int(current_price)
+                success_msg = (
+                    f"🛑 **[Stop Loss Sell Success]** {company} {quantity}주 자동 손절 완료 "
+                    f"(매도가: {price:,}원)"
+                )
+                await self.notifier.notify_all(success_msg)
+                await self.notifier.notify_diary(f"🛑 [Stop Loss Sold] {company} @ {price:,}원")
+
+                pnl = (price - entry_price) * quantity
+                pnl_rate = (price - entry_price) / entry_price
+                self._save_history(company, code, quantity, entry_price, price, pnl, pnl_rate)
+                self._save_trade(company, code, quantity, price, "sell")
+            else:
+                self._mark_trade_stop_loss_pending(code, False)
+                fail_msg = f"❌ **[Stop Loss Sell Fail]** {company} 자동 손절 실패: {res.get('msg1')}"
+                await self.notifier.notify_all(fail_msg)
+        except Exception as exc:
+            self._mark_trade_stop_loss_pending(code, False)
+            await self.notifier.notify_all(f"❌ **[Stop Loss Exception]** {company}: {exc}")
+
     def _save_trade(self, company: str, code: str, quantity: int, price: int, action: str, stop_loss_price: int | None = None):
         trades = self._load_trades()
         if action == "buy":
@@ -276,12 +381,13 @@ class DanteTrader:
                 "quantity": quantity,
                 "entry_price": price,
                 "stop_loss_price": stop_loss_price,
+                "stop_loss_pending": False,
                 "entry_at": datetime.now().isoformat()
             }
         elif action == "sell":
             if code in trades:
                 del trades[code]
-        
+
         with open(self.active_trades_path, "w", encoding="utf-8") as f:
             json.dump(trades, f, ensure_ascii=False, indent=2)
 
@@ -293,6 +399,19 @@ class DanteTrader:
                 return json.load(f)
         except Exception:
             return {}
+
+    def _mark_trade_stop_loss_pending(self, code: str, pending: bool, trigger_price: float | None = None):
+        trades = self._load_trades()
+        if code not in trades:
+            return
+
+        trades[code]["stop_loss_pending"] = pending
+        if trigger_price is not None:
+            trades[code]["last_stop_loss_trigger_price"] = trigger_price
+            trades[code]["last_stop_loss_triggered_at"] = datetime.now().isoformat()
+
+        with open(self.active_trades_path, "w", encoding="utf-8") as f:
+            json.dump(trades, f, ensure_ascii=False, indent=2)
 
     def _extract_price(self, res: dict) -> int:
         # KIS 주문 결과에서 가격 추출 (실제로는 체결 결과를 확인해야 정확하지만, 편의상 현재가 기반으로 추정하거나 응답에서 확인)

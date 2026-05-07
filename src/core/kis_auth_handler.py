@@ -17,36 +17,76 @@ CURRENT_DIR = Path(__file__).parent
 
 class KISAuthHandler:
     def __init__(self):
-        # 1. First, check if already in environment (e.g., from Docker/Compose)
-        self.app_key = os.getenv("KIS_APP_KEY")
-        self.app_secret = os.getenv("KIS_APP_SECRET")
-        
-        # 2. If not, try loading from ~/.ssh/kis (legacy local setup)
-        if not self.app_key or not self.app_secret:
-            KEY_PATH = Path.home() / ".ssh" / "kis"
-            if KEY_PATH.exists():
-                load_dotenv(KEY_PATH)
-                self.app_key = os.getenv("KIS_APP_KEY")
-                self.app_secret = os.getenv("KIS_APP_SECRET")
-        
-        # 3. Fallback to standard .env in current directory
-        if not self.app_key or not self.app_secret:
-            load_dotenv()
-            self.app_key = os.getenv("KIS_APP_KEY")
-            self.app_secret = os.getenv("KIS_APP_SECRET")
+        key_path = Path.home() / ".ssh" / "kis"
+        if key_path.exists():
+            load_dotenv(key_path)
+        load_dotenv()
 
-        self.is_simulation = os.getenv("KIS_SIMULATION", "false").lower() == "true"
-        
+        self.credential_profile = self._resolve_profile()
+        self.app_key, self.app_secret = self._resolve_api_credentials(self.credential_profile)
+        self.account_number, self.account_product_code = self._resolve_account_credentials(
+            self.credential_profile
+        )
+        self.is_simulation = self.credential_profile == "paper" or (
+            os.getenv("KIS_SIMULATION", "false").lower() == "true"
+        )
+
         if self.is_simulation:
             self.base_url = "https://openapivts.koreainvestment.com:29443"
         else:
             self.base_url = "https://openapi.koreainvestment.com:9443"
 
         if not self.app_key or not self.app_secret:
-            raise ValueError("KIS_APP_KEY and KIS_APP_SECRET must be set in ~/.ssh/kis")
+            raise ValueError("KIS API credentials are missing. Set KIS_* or PAPER_* in ~/.ssh/kis.")
 
-        self.token_file = CURRENT_DIR.parent / "access_token.json"
+        self.token_file = CURRENT_DIR.parent / f"access_token.{self.credential_profile}.json"
         self._access_token = None
+        logger.info(
+            "Initialized KIS auth profile={} simulation={} account_configured={}",
+            self.credential_profile,
+            self.is_simulation,
+            bool(self.account_number),
+        )
+
+    def _resolve_profile(self) -> str:
+        requested = (os.getenv("KIS_PROFILE") or "").strip().lower()
+        has_live = bool(os.getenv("KIS_APP_KEY") and os.getenv("KIS_APP_SECRET"))
+        has_paper = bool(os.getenv("PAPER_APP_KEY") and os.getenv("PAPER_APP_SECRET"))
+
+        if requested in {"paper", "mock", "simulation"}:
+            return "paper"
+        if requested in {"live", "real", "production"}:
+            return "live"
+        if has_paper:
+            return "paper"
+        if has_live:
+            return "live"
+        return "live"
+
+    def _resolve_api_credentials(self, profile: str) -> tuple[str | None, str | None]:
+        if profile == "paper":
+            return os.getenv("PAPER_APP_KEY"), os.getenv("PAPER_APP_SECRET")
+        return os.getenv("KIS_APP_KEY"), os.getenv("KIS_APP_SECRET")
+
+    def _resolve_account_credentials(self, profile: str) -> tuple[str, str]:
+        if profile == "paper":
+            account = (
+                os.getenv("PAPER_ACCOUNT")
+                or os.getenv("PAPER_CANO")
+                or os.getenv("PAPER_KIS_CANO")
+                or ""
+            )
+            product_code = (
+                os.getenv("PAPER_ACNT_PRDT_CD")
+                or os.getenv("PAPER_ACCOUNT_PRODUCT_CODE")
+                or os.getenv("KIS_ACNT_PRDT_CD")
+                or "01"
+            )
+            return account, product_code
+
+        account = os.getenv("KIS_CANO") or os.getenv("KIS_ACCOUNT") or ""
+        product_code = os.getenv("KIS_ACNT_PRDT_CD", "01")
+        return account, product_code
 
     def _save_token(self, token_data: dict):
         """토큰 정보와 서버에서 준 만료 시간을 함께 저장"""

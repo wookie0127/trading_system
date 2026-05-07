@@ -55,6 +55,14 @@ src/
   KIS_APP_KEY=your_app_key
   KIS_APP_SECRET=your_app_secret
   ```
+  모의투자 전용 계정을 쓰는 경우에는 아래처럼 `PAPER_*` 키만 넣어도 됩니다.
+  ```
+  PAPER_ACCOUNT=12345678
+  PAPER_APP_KEY=your_paper_app_key
+  PAPER_APP_SECRET=your_paper_app_secret
+  PAPER_ACNT_PRDT_CD=01
+  ```
+  이 경우 코드가 자동으로 모의투자 프로필을 선택하고 VTS 엔드포인트를 사용합니다.
 
 ---
 
@@ -217,6 +225,19 @@ Docker worker에서도 같은 로그인 세션을 쓰기 위해 `docker-compose.
 ```bash
 uv run python src/news/gemini_news_orchestrator.py
 ```
+
+### 텔레그램 리딩방 실시간 매매
+
+텔레그램 메시지를 파싱한 뒤 Discord 또는 터미널에서 `buy` / `sell` / `skip` 확인을 받고, 승인되면 KIS 계좌로 주문을 넣을 수 있습니다.
+
+```bash
+uv run python src/follow_dante_reading/orchestrator.py serve --chat <chat_alias_or_id> --notify
+```
+
+- `PAPER_*` 자격증명만 있으면 모의투자 계좌로 주문합니다.
+- 매수 후보 신호에는 `buy` 또는 `skip`으로 응답합니다.
+- 매도 신호에는 `sell` 또는 `skip`으로 응답합니다.
+- `DISCORD_TOKEN` / `DISCORD_CHANNEL_ID`가 없으면 확인 입력은 터미널에서 받습니다.
 
 Prefect 배포:
 
