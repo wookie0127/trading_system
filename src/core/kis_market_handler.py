@@ -33,7 +33,28 @@ if CONFIG_PATH.exists():
 
 def read_json(json_path: str) -> list[dict]:
     with open(json_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        payload = json.load(f)
+
+    if isinstance(payload, list):
+        return payload
+
+    if isinstance(payload, dict):
+        components = payload.get("components")
+        if isinstance(components, list):
+            normalized: list[dict] = []
+            for item in components:
+                if not isinstance(item, dict):
+                    continue
+                normalized.append(
+                    {
+                        "code": item.get("symbol") or item.get("code"),
+                        "ko_name": item.get("name") or item.get("ko_name"),
+                        "en_name": item.get("name") or item.get("en_name"),
+                    }
+                )
+            return normalized
+
+    return []
 
 
 def load_codes() -> list[dict]:
@@ -68,11 +89,16 @@ class MarketHandler(KISAuthHandler):
 
     def get_code(self, company_name: str) -> str | None:
         """종목명으로 종목 코드 찾기"""
+        normalized_name = company_name.strip()
         for stock in self._code_df:
-            if stock.get("ko_name") == company_name or stock.get("en_name") == company_name:
+            if (
+                stock.get("ko_name") == normalized_name
+                or stock.get("en_name") == normalized_name
+                or stock.get("code") == normalized_name
+            ):
                 return stock.get("code")
 
-        logger.warning(f"No code found for company: {company_name}")
+        logger.warning(f"No code found for company: {normalized_name}")
         return None
 
     def fetch_price(self, symbol: str) -> dict:
@@ -380,8 +406,31 @@ class MarketHandler(KISAuthHandler):
             "ORD_QTY": str(quantity),
             "ORD_UNPR": str(price),
         }
-        res = httpx.post(f"{self.base_url}/{endpoint}", headers=headers, json=body, timeout=10)
-        return res.json()
+        request_url = f"{self.base_url}/{endpoint}"
+        logger.info(
+            "KIS order request profile={} simulation={} side={} symbol={} qty={} order_type={} tr_id={} url={}",
+            self.credential_profile,
+            self.is_simulation,
+            side,
+            symbol,
+            quantity,
+            order_type,
+            tr_id,
+            request_url,
+        )
+        res = httpx.post(request_url, headers=headers, json=body, timeout=10)
+        data = res.json()
+        logger.info(
+            "KIS order response side={} symbol={} qty={} status_code={} rt_cd={} msg_cd={} msg1={}",
+            side,
+            symbol,
+            quantity,
+            res.status_code,
+            data.get("rt_cd"),
+            data.get("msg_cd"),
+            data.get("msg1"),
+        )
+        return data
 
     # --- 하위 호환성 유지를 위한 Alias 메서드 ---
     def get_balance(self):
