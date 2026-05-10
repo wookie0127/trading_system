@@ -33,7 +33,28 @@ if CONFIG_PATH.exists():
 
 def read_json(json_path: str) -> list[dict]:
     with open(json_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        payload = json.load(f)
+
+    if isinstance(payload, list):
+        return payload
+
+    if isinstance(payload, dict):
+        components = payload.get("components")
+        if isinstance(components, list):
+            normalized: list[dict] = []
+            for item in components:
+                if not isinstance(item, dict):
+                    continue
+                normalized.append(
+                    {
+                        "code": item.get("symbol") or item.get("code"),
+                        "ko_name": item.get("name") or item.get("ko_name"),
+                        "en_name": item.get("name") or item.get("en_name"),
+                    }
+                )
+            return normalized
+
+    return []
 
 
 def load_codes() -> list[dict]:
@@ -53,8 +74,8 @@ class MarketHandler(KISAuthHandler):
         self.exchange = exchange
 
         # 계좌 설정 (8자리-2자리 분리)
-        cano = os.getenv("KIS_CANO", "")
-        prdt_cd = os.getenv("KIS_ACNT_PRDT_CD", "01")
+        cano = self.account_number
+        prdt_cd = self.account_product_code
 
         if "-" in cano:
             self.acc_no_prefix = cano.split("-")[0]
@@ -63,13 +84,21 @@ class MarketHandler(KISAuthHandler):
             self.acc_no_prefix = cano
             self.acc_no_postfix = prdt_cd.zfill(2)
 
+        if not self.acc_no_prefix:
+            logger.warning("No KIS account number configured for profile={}", self.credential_profile)
+
     def get_code(self, company_name: str) -> str | None:
         """종목명으로 종목 코드 찾기"""
+        normalized_name = company_name.strip()
         for stock in self._code_df:
-            if stock.get("ko_name") == company_name or stock.get("en_name") == company_name:
+            if (
+                stock.get("ko_name") == normalized_name
+                or stock.get("en_name") == normalized_name
+                or stock.get("code") == normalized_name
+            ):
                 return stock.get("code")
 
-        logger.warning(f"No code found for company: {company_name}")
+        logger.warning(f"No code found for company: {normalized_name}")
         return None
 
     def fetch_price(self, symbol: str) -> dict:
@@ -82,32 +111,26 @@ class MarketHandler(KISAuthHandler):
     def fetch_domestic_price(self, symbol: str) -> dict:
         """국내 주식 현재가 조회"""
         endpoint = "uapi/domestic-stock/v1/quotations/inquire-price"
-        headers = {
-            "Content-Type": "application/json",
-            "authorization": f"Bearer {self.get_valid_token()}",
-            "appkey": self.app_key,
-            "appsecret": self.app_secret,
-            "tr_id": "FHKST01010100",
-        }
         params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": symbol}
-        res = httpx.get(f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10)
-        return res.json()
+        return self._request_with_auth(
+            "GET",
+            endpoint,
+            tr_id="FHKST01010100",
+            params=params,
+        )
 
     def fetch_oversea_price(self, symbol: str) -> dict:
         """해외 주식 현재가 조회"""
         endpoint = "uapi/overseas-price/v1/quotations/price"
-        headers = {
-            "Content-Type": "application/json",
-            "authorization": f"Bearer {self.get_valid_token()}",
-            "appkey": self.app_key,
-            "appsecret": self.app_secret,
-            "tr_id": "HHDFS00000300",
-        }
         # KIS 해외 거래소 코드 반영 (나스닥: NAS, 뉴욕: NYS)
         excd = "NAS" if self.exchange == "나스닥" else "NYS"
         params = {"AUTH": "", "EXCD": excd, "SYMB": symbol}
-        res = httpx.get(f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10)
-        return res.json()
+        return self._request_with_auth(
+            "GET",
+            endpoint,
+            tr_id="HHDFS00000300",
+            params=params,
+        )
 
     def fetch_ohlcv(self, symbol: str, timeframe: str = "D", start_day: str = "", end_day: str = "", adj_price: bool = True, limit: int = 100) -> list[dict]:
         """과거 주가 데이터 조회 (OHLCV) - 페이지네이션 지원"""
@@ -362,13 +385,6 @@ class MarketHandler(KISAuthHandler):
         else:
             tr_id = "VTTC0801U" if self.is_simulation else "TTTC0801U"
 
-        headers = {
-            "Content-Type": "application/json",
-            "authorization": f"Bearer {self.get_valid_token()}",
-            "appkey": self.app_key,
-            "appsecret": self.app_secret,
-            "tr_id": tr_id,
-        }
         body = {
             "CANO": self.acc_no_prefix,
             "ACNT_PRDT_CD": self.acc_no_postfix,
@@ -377,8 +393,79 @@ class MarketHandler(KISAuthHandler):
             "ORD_QTY": str(quantity),
             "ORD_UNPR": str(price),
         }
-        res = httpx.post(f"{self.base_url}/{endpoint}", headers=headers, json=body, timeout=10)
-        return res.json()
+        request_url = f"{self.base_url}/{endpoint}"
+        logger.info(
+            "KIS order request profile={} simulation={} side={} symbol={} qty={} order_type={} tr_id={} url={}",
+            self.credential_profile,
+            self.is_simulation,
+            side,
+            symbol,
+            quantity,
+            order_type,
+            tr_id,
+            request_url,
+        )
+        data = self._request_with_auth("POST", endpoint, tr_id=tr_id, json=body)
+        logger.info(
+            "KIS order response side={} symbol={} qty={} status_code={} rt_cd={} msg_cd={} msg1={}",
+            side,
+            symbol,
+            quantity,
+            data.get("_http_status_code"),
+            data.get("rt_cd"),
+            data.get("msg_cd"),
+            data.get("msg1"),
+        )
+        return data
+
+    def _build_headers(self, tr_id: str, token: str) -> dict[str, str]:
+        return {
+            "Content-Type": "application/json",
+            "authorization": f"Bearer {token}",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+            "tr_id": tr_id,
+        }
+
+    def _is_token_expired_response(self, data: dict) -> bool:
+        message = str(data.get("msg1") or data.get("error_description") or "").lower()
+        return "만료된 token" in message or "expired token" in message
+
+    def _request_with_auth(
+        self,
+        method: str,
+        endpoint: str,
+        tr_id: str,
+        params: dict | None = None,
+        json: dict | None = None,
+    ) -> dict:
+        request_url = f"{self.base_url}/{endpoint}"
+
+        for attempt in range(2):
+            token = self.get_valid_token() if attempt == 0 else self.force_refresh_token()
+            headers = self._build_headers(tr_id, token)
+            response = httpx.request(
+                method,
+                request_url,
+                headers=headers,
+                params=params,
+                json=json,
+                timeout=10,
+            )
+            data = response.json()
+            data["_http_status_code"] = response.status_code
+
+            if attempt == 0 and self._is_token_expired_response(data):
+                logger.warning(
+                    "KIS API reported expired token. Refreshing token and retrying once. endpoint={} tr_id={}",
+                    endpoint,
+                    tr_id,
+                )
+                continue
+
+            return data
+
+        return {"rt_cd": "1", "msg1": "토큰 재발급 후에도 요청이 실패했습니다."}
 
     # --- 하위 호환성 유지를 위한 Alias 메서드 ---
     def get_balance(self):

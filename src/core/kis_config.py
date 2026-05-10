@@ -1,10 +1,11 @@
 from pathlib import Path
 
 DATADIR = Path(__file__).parents[1] / "data"
+PROJECT_DATA_DIR = Path(__file__).parents[2] / "data"
 
 CODE_PATH_BOOK = {
-    "nasdaq": DATADIR / "nasdaq_code_list.json",
-    "kospi": DATADIR / "kospi_code_list.json"
+    "nasdaq": PROJECT_DATA_DIR / "reference" / "nasdaq100_symbols.json",
+    "kospi": PROJECT_DATA_DIR / "reference" / "kospi200_symbols.json",
 }
 
 API_ROOT = "https://openapi.koreainvestment.com:9443"
