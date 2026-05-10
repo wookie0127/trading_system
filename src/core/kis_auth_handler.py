@@ -2,6 +2,7 @@
 Handle auth for KIS
 """
 
+import base64
 import json
 import os
 import time
@@ -48,6 +49,41 @@ class KISAuthHandler:
             bool(self.account_number),
         )
 
+    def _decode_jwt_exp(self, access_token: str | None) -> int | None:
+        """JWT payload의 exp 클레임을 읽어 Unix timestamp로 반환"""
+        if not access_token:
+            return None
+
+        try:
+            parts = access_token.split(".")
+            if len(parts) < 2:
+                return None
+
+            payload = parts[1]
+            payload += "=" * (-len(payload) % 4)
+            decoded = base64.urlsafe_b64decode(payload.encode("utf-8"))
+            return int(json.loads(decoded).get("exp"))
+        except Exception:
+            return None
+
+    def _normalize_expired_at_timestamp(self, token_data: dict) -> bool:
+        """토큰 만료 시각을 환경과 무관한 값으로 정규화"""
+        jwt_exp = self._decode_jwt_exp(token_data.get("access_token"))
+        if jwt_exp:
+            changed = token_data.get("expired_at_timestamp") != float(jwt_exp)
+            token_data["expired_at_timestamp"] = float(jwt_exp)
+            return changed
+
+        expired_at_str = token_data.get("access_token_token_expired")
+        if expired_at_str:
+            dt = datetime.strptime(expired_at_str, "%Y-%m-%d %H:%M:%S")
+            normalized = dt.timestamp()
+            changed = token_data.get("expired_at_timestamp") != normalized
+            token_data["expired_at_timestamp"] = normalized
+            return changed
+
+        return False
+
     def _resolve_profile(self) -> str:
         requested = (os.getenv("KIS_PROFILE") or "").strip().lower()
         has_live = bool(os.getenv("KIS_APP_KEY") and os.getenv("KIS_APP_SECRET"))
@@ -90,11 +126,8 @@ class KISAuthHandler:
 
     def _save_token(self, token_data: dict):
         """토큰 정보와 서버에서 준 만료 시간을 함께 저장"""
-        expired_at_str = token_data.get("access_token_token_expired")
-        if expired_at_str:
-            dt = datetime.strptime(expired_at_str, "%Y-%m-%d %H:%M:%S")
-            token_data["expired_at_timestamp"] = dt.timestamp()
-            token_data["app_key"] = self.app_key
+        self._normalize_expired_at_timestamp(token_data)
+        token_data["app_key"] = self.app_key
 
         with open(self.token_file, "w", encoding="utf-8") as f:
             json.dump(token_data, f, ensure_ascii=False, indent=2)
@@ -105,7 +138,15 @@ class KISAuthHandler:
             return None
         try:
             with open(self.token_file, "r", encoding="utf-8") as f:
-                return json.load(f)
+                token_data = json.load(f)
+            if isinstance(token_data, dict):
+                changed = self._normalize_expired_at_timestamp(token_data)
+                if token_data.get("app_key") != self.app_key:
+                    token_data["app_key"] = self.app_key
+                    changed = True
+                if changed:
+                    self._save_token(token_data)
+            return token_data
         except Exception:
             return None
 
@@ -132,6 +173,10 @@ class KISAuthHandler:
             # token_data가 None이 아님을 _is_token_valid에서 보장함
             return token_data["access_token"]  # type: ignore
 
+        return self._issue_new_token()
+
+    def force_refresh_token(self) -> str:
+        """캐시를 무시하고 새 토큰 발급"""
         return self._issue_new_token()
 
     def _issue_new_token(self) -> str:
