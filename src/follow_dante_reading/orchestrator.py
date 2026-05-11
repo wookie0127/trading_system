@@ -229,6 +229,7 @@ class DanteReadingOrchestrator:
         async with anyio.create_task_group() as tg:
             # 수익률 트래킹 루프 및 Discord 커맨드 루프 시작
             tg.start_soon(self.trader.track_holdings_loop, tg)
+            tg.start_soon(self.trader.track_trade_prices_loop)
             tg.start_soon(self._run_discord_command_loop)
 
             # 텔레그램 이벤트 핸들러 정의
@@ -472,6 +473,11 @@ class DanteReadingOrchestrator:
             return
 
         if res.get("rt_cd") == "0":
+            price = self.trader._extract_price(res, fallback_code=code)
+            if side == "buy":
+                self.trader.record_executed_buy(stock_name, code, quantity, price)
+            else:
+                self.trader.record_executed_sell(stock_name, code, quantity, price)
             await message.channel.send(
                 f"✅ {verb} 주문 성공: {stock_name}({code}) {quantity}주"
             )
