@@ -11,23 +11,23 @@ def check_interval(symbol, interval, period):
         if df.empty:
             print(f"  FAILED: No data returned.")
             return None
-        
+
         # Flatten MultiIndex if necessary
         if hasattr(df.columns, "levels"):
             df.columns = [col[0] for col in df.columns]
-            
+
         df = df.dropna()
         if df.empty:
             print(f"  FAILED: Data is all NaN.")
             return None
-            
+
         start_date = df.index.min()
         end_date = df.index.max()
         count = len(df)
-        
+
         print(f"  SUCCESS: {count} rows found.")
         print(f"  Range: {start_date} to {end_date}")
-        
+
         # Check for gaps
         if interval == '1d':
             diff = df.index.to_series().diff().max()
@@ -42,7 +42,7 @@ def check_interval(symbol, interval, period):
                     if intra_diff > max_intra_gap:
                         max_intra_gap = intra_diff
             print(f"  Max intra-day gap: {max_intra_gap}")
-            
+
         return df
     except Exception as e:
         print(f"  ERROR: {e}")
@@ -51,7 +51,7 @@ def check_interval(symbol, interval, period):
 def check_local_data(symbol):
     print(f"\n[Local Data] Checking {symbol}...")
     base_dir = Path("src/data/market_data/us/stock")
-    
+
     # Check daily
     daily_dir = base_dir / "daily"
     if daily_dir.exists():
@@ -62,7 +62,7 @@ def check_local_data(symbol):
             print("  Daily data: No files found.")
     else:
         print("  Daily data: Directory not found.")
-        
+
     # Check 1min
     min_dir = base_dir / "1min"
     if min_dir.exists():
@@ -78,8 +78,8 @@ if __name__ == "__main__":
     symbol = "QQQ"
     period = "3mo"
     intervals = ["1m", "5m", "15m", "1d"]
-    
+
     check_local_data(symbol)
-    
+
     for interval in intervals:
         check_interval(symbol, interval, period)
