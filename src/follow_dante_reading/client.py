@@ -34,12 +34,18 @@ if API_KEYS_PATH.exists():
 
 SESSION_BASENAME = CURRENT_DIR / "test_check"
 
-async def get_discord_input(prompt: str) -> str:
+async def get_discord_input(
+    prompt: str,
+    *,
+    preferred_channel_name: str | None = None,
+    channel_id: str | None = None,
+    request_label: str = "📢 **[Input Request]**",
+) -> str:
     """Discord 채널로부터 입력을 대기합니다."""
     token = os.environ.get("DISCORD_TOKEN") or os.environ.get("DISCORD_BOT_TOKEN")
-    channel_id = os.environ.get("DISCORD_CHANNEL_ID")
+    target_channel_id = channel_id or os.environ.get("DISCORD_CHANNEL_ID")
     
-    if not token or not channel_id:
+    if not token or not target_channel_id:
         # 폴백: Discord 정보가 없으면 터미널 입력 사용
         logger.warning("DISCORD_TOKEN or DISCORD_CHANNEL_ID missing. Falling back to terminal input.")
         return input(f"{prompt}: ")
@@ -47,6 +53,7 @@ async def get_discord_input(prompt: str) -> str:
     intents = discord.Intents.default()
     intents.message_content = True
     client = discord.Client(intents=intents)
+    selected_channel = {"id": None}
     
     # anyio의 MemoryObjectStream을 사용하여 값을 전달받음 (Future 대체)
     send_stream, receive_stream = anyio.create_memory_object_stream(1)
@@ -54,47 +61,45 @@ async def get_discord_input(prompt: str) -> str:
     @client.event
     async def on_ready():
         logger.info("Auth-helper Discord client ready.")
-        
-        # 1. 이름으로 채널 찾기 시도 (사용자 요청: #telegram_client 최우선)
-        target_name = "telegram_client"
+
+        # 1. 이름 기준 채널 우선 탐색
         channel = None
-        for guild in client.guilds:
-            channel = discord.utils.get(guild.text_channels, name=target_name)
+        if preferred_channel_name:
+            for guild in client.guilds:
+                channel = discord.utils.get(guild.text_channels, name=preferred_channel_name)
+                if channel:
+                    logger.info(
+                        "Found Discord input channel by name '{}' in guild '{}'",
+                        preferred_channel_name,
+                        guild.name,
+                    )
+                    break
+
+        # 2. 이름 기반 탐색 실패 시 기본 채널 ID 사용
+        if not channel and target_channel_id:
+            channel = client.get_channel(int(target_channel_id))
             if channel:
-                logger.info(f"Found auth channel by name '{target_name}' in guild '{guild.name}'")
-                break
-        
-        # 2. 이름으로 못 찾은 경우만 ID로 채널 찾기 시도
-        if not channel and channel_id:
-            channel = client.get_channel(int(channel_id))
-            if channel:
-                logger.info(f"Using default channel ID: {channel_id}")
-        
+                logger.info(f"Using Discord input channel ID: {target_channel_id}")
+
         if channel:
-            await channel.send(f"🔐 **[Telegram Auth]** {prompt}를 입력해주세요.")
+            selected_channel["id"] = channel.id
+            await channel.send(f"{request_label} {prompt}를 입력해주세요.")
         else:
-            logger.error(f"Could not find Discord channel (Name: telegram_client or ID: {channel_id})")
+            logger.error(
+                "Could not find Discord input channel (name={} or id={})",
+                preferred_channel_name,
+                target_channel_id,
+            )
             await send_stream.send(None) # 에러 상황 알림
 
     @client.event
     async def on_message(message):
         if message.author.bot:
             return
-        
-        # 현재 활성화된 채널 확인
-        target_name = "telegram_client"
-        is_auth_channel = False
-        
-        if message.channel.name == target_name:
-            is_auth_channel = True
-        elif channel_id and str(message.channel.id) == str(channel_id):
-            exists_name_channel = any(discord.utils.get(g.text_channels, name=target_name) for g in client.guilds)
-            if not exists_name_channel:
-                is_auth_channel = True
 
-        if not is_auth_channel:
+        if selected_channel["id"] is None or message.channel.id != selected_channel["id"]:
             return
-        
+
         content = message.content.strip()
         if content:
             logger.info(f"Received input from Discord: {content}")
@@ -147,9 +152,21 @@ class TelegramReadingClient:
         
         if via_discord:
             await self.client.start(
-                phone=lambda: get_discord_input("핸드폰 번호 (ex: +821012345678)"),
-                code_callback=lambda: get_discord_input("인증 코드 (숫자 5자리)"),
-                password=lambda: get_discord_input("2단계 인증 비밀번호 (설정된 경우만)")
+                phone=lambda: get_discord_input(
+                    "핸드폰 번호 (ex: +821012345678)",
+                    preferred_channel_name="telegram_client",
+                    request_label="🔐 **[Telegram Auth]**",
+                ),
+                code_callback=lambda: get_discord_input(
+                    "인증 코드 (숫자 5자리)",
+                    preferred_channel_name="telegram_client",
+                    request_label="🔐 **[Telegram Auth]**",
+                ),
+                password=lambda: get_discord_input(
+                    "2단계 인증 비밀번호 (설정된 경우만)",
+                    preferred_channel_name="telegram_client",
+                    request_label="🔐 **[Telegram Auth]**",
+                )
             )
         else:
             await self.client.start()

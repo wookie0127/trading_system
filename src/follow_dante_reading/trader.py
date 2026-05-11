@@ -68,12 +68,15 @@ class DanteTrader:
     async def _confirm_and_buy(self, company: str, code: str, signal: ReadingSignal):
         """매수 컨펌 및 실행"""
         prompt = (
-            f"📢 **[Trade Confirm]** '{company}'({code})를 매수할까요? "
+            f"'{company}'({code})를 매수할까요? "
             f"(신뢰도: {signal.confidence:.2f})\n"
             f"• 응답: `buy` 또는 `skip` (`y`/`yes`도 가능)\n"
             f"• 원문: {signal.rationale_text[:100]}..."
         )
-        answer = await get_discord_input(prompt)
+        answer = await get_discord_input(
+            prompt,
+            request_label="📢 **[Trade Confirm]**",
+        )
 
         if self._is_trade_confirmed(answer, expected_action="buy"):
             quantity = self.order_quantity
@@ -129,11 +132,14 @@ class DanteTrader:
             return
 
         prompt = (
-            f"📢 **[Trade Confirm]** 보유 중인 '{company}'({code})를 매도할까요?\n"
+            f"보유 중인 '{company}'({code})를 매도할까요?\n"
             f"• 응답: `sell` 또는 `skip` (`y`/`yes`도 가능)\n"
             f"• 원문: {signal.rationale_text[:100]}..."
         )
-        answer = await get_discord_input(prompt)
+        answer = await get_discord_input(
+            prompt,
+            request_label="📢 **[Trade Confirm]**",
+        )
 
         if self._is_trade_confirmed(answer, expected_action="sell"):
             quantity = active_trades[code]["quantity"]

@@ -4,12 +4,15 @@ del _sys, _Path
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 
 import httpx
 import yaml
 from dotenv import load_dotenv
+import FinanceDataReader as fdr
+from pykrx import stock as pykrx_stock
 
 from core.kis_auth_handler import KISAuthHandler
 from core.kis_config import CODE_PATH_BOOK
@@ -70,7 +73,10 @@ def load_codes() -> list[dict]:
 class MarketHandler(KISAuthHandler):
     def __init__(self, exchange: str = "서울"):
         super().__init__()
-        self._code_df = load_codes()
+        self.reference_dir = CURRENT_DIR.parent.parent / "data" / "reference"
+        self.reference_dir.mkdir(parents=True, exist_ok=True)
+        self.krx_code_cache_path = self.reference_dir / "krx_all_symbols.json"
+        self._code_df = self._load_all_codes()
         self.exchange = exchange
 
         # 계좌 설정 (8자리-2자리 분리)
@@ -87,19 +93,208 @@ class MarketHandler(KISAuthHandler):
         if not self.acc_no_prefix:
             logger.warning("No KIS account number configured for profile={}", self.credential_profile)
 
+    def _load_all_codes(self) -> list[dict]:
+        records = load_codes()
+        records.extend(self._load_cached_krx_codes())
+        return self._dedupe_code_records(records)
+
     def get_code(self, company_name: str) -> str | None:
         """종목명으로 종목 코드 찾기"""
-        normalized_name = company_name.strip()
-        for stock in self._code_df:
-            if (
-                stock.get("ko_name") == normalized_name
-                or stock.get("en_name") == normalized_name
-                or stock.get("code") == normalized_name
-            ):
-                return stock.get("code")
+        candidates = self._build_code_lookup_candidates(company_name)
+        records = self.search_symbols(company_name, limit=1)
+        if records:
+            return records[0].get("code")
 
-        logger.warning(f"No code found for company: {normalized_name}")
+        refreshed_records = self.search_symbols(company_name, limit=1, refresh=True)
+        if refreshed_records:
+            return refreshed_records[0].get("code")
+
+        logger.warning(f"No code found for company: {company_name.strip()} candidates={candidates}")
         return None
+
+    def search_symbols(self, query: str, limit: int = 20, refresh: bool = False) -> list[dict]:
+        """로컬 캐시와 KRX 전체 종목 캐시를 이용해 종목 검색"""
+        if refresh:
+            try:
+                self.refresh_krx_codes()
+            except Exception as exc:
+                logger.warning("Failed to refresh KRX symbols during search: {}", exc)
+
+        candidates = self._build_code_lookup_candidates(query)
+        records = self._search_code_records(candidates, limit=limit)
+        if records or refresh:
+            return records
+
+        if not self._load_cached_krx_codes():
+            try:
+                self.refresh_krx_codes()
+            except Exception as exc:
+                logger.warning("Failed to refresh initial KRX symbol cache: {}", exc)
+                return records
+            return self._search_code_records(candidates, limit=limit)
+
+        return records
+
+    def refresh_krx_codes(self) -> list[dict]:
+        """KRX 전체 상장 종목 캐시 갱신"""
+        records = self._fetch_krx_codes_from_fdr()
+        if not records:
+            records = self._fetch_krx_codes_from_pykrx()
+
+        if not records:
+            raise RuntimeError("Failed to refresh KRX symbol cache from both FDR and pykrx")
+
+        normalized = self._dedupe_code_records(records)
+        with open(self.krx_code_cache_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "count": len(normalized),
+                    "symbols": normalized,
+                },
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
+
+        self._code_df = self._dedupe_code_records(load_codes() + normalized)
+        logger.info("Refreshed KRX symbol cache: {} symbols", len(normalized))
+        return normalized
+
+    def _fetch_krx_codes_from_fdr(self) -> list[dict]:
+        records: list[dict] = []
+        try:
+            df = fdr.StockListing("KRX")
+        except Exception as exc:
+            logger.warning("FinanceDataReader KRX listing failed: {}", exc)
+            return records
+
+        for item in df.to_dict("records"):
+            symbol = str(item.get("Code") or item.get("Symbol") or "").zfill(6)
+            name = str(item.get("Name") or "").strip()
+            market = str(item.get("Market") or "KRX").strip()
+            if not symbol or not name:
+                continue
+            records.append(
+                {
+                    "code": symbol,
+                    "ko_name": name,
+                    "en_name": name,
+                    "market": market,
+                    "source": "fdr",
+                }
+            )
+
+        return records
+
+    def _fetch_krx_codes_from_pykrx(self) -> list[dict]:
+        markets = ("KOSPI", "KOSDAQ", "KONEX")
+        records: list[dict] = []
+
+        try:
+            for market in markets:
+                tickers = pykrx_stock.get_market_ticker_list(market=market)
+                for ticker in tickers:
+                    name = pykrx_stock.get_market_ticker_name(ticker)
+                    if not name:
+                        continue
+                    records.append(
+                        {
+                            "code": ticker,
+                            "ko_name": name,
+                            "en_name": name,
+                            "market": market,
+                            "source": "pykrx",
+                        }
+                    )
+        except Exception as exc:
+            logger.warning("pykrx KRX listing failed: {}", exc)
+            return []
+
+        return records
+
+    @staticmethod
+    def _build_code_lookup_candidates(company_name: str) -> list[str]:
+        raw = company_name.strip()
+        if not raw:
+            return []
+
+        candidates: list[str] = []
+
+        def add(value: str):
+            normalized = re.sub(r"\s+", " ", value).strip(" '\"[]{}")
+            if normalized and normalized not in candidates:
+                candidates.append(normalized)
+
+        add(raw)
+        add(raw.replace(" ", ""))
+
+        for inner in re.findall(r"\(([^)]+)\)", raw):
+            add(inner)
+            add(inner.replace(" ", ""))
+
+        for part in re.split(r"[,/·→\-]|(?:\(|\))", raw):
+            add(part)
+
+        for suffix in ("그룹", "그룹주", "계열", "계열주", "테마", "관련주", "섹터"):
+            if raw.endswith(suffix):
+                add(raw[: -len(suffix)])
+
+        return candidates
+
+    def _search_code_records(self, candidates: list[str], limit: int = 20) -> list[dict]:
+        exact_matches: list[dict] = []
+        partial_matches: list[dict] = []
+
+        for stock in self._code_df:
+            code = str(stock.get("code") or "")
+            ko_name = str(stock.get("ko_name") or "")
+            en_name = str(stock.get("en_name") or "")
+            searchable = [code, ko_name, en_name, ko_name.replace(" ", ""), en_name.replace(" ", "")]
+
+            for candidate in candidates:
+                if any(value == candidate for value in searchable if value):
+                    exact_matches.append(stock)
+                    break
+            else:
+                merged = " ".join(searchable)
+                if any(candidate and candidate in merged for candidate in candidates):
+                    partial_matches.append(stock)
+
+        merged = self._dedupe_code_records(exact_matches + partial_matches)
+        return merged[:limit]
+
+    def _load_cached_krx_codes(self) -> list[dict]:
+        if not self.krx_code_cache_path.exists():
+            return []
+
+        try:
+            with open(self.krx_code_cache_path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+        except Exception:
+            return []
+
+        if isinstance(payload, dict) and isinstance(payload.get("symbols"), list):
+            return payload["symbols"]
+        if isinstance(payload, list):
+            return payload
+        return []
+
+    @staticmethod
+    def _dedupe_code_records(records: list[dict]) -> list[dict]:
+        deduped: list[dict] = []
+        seen: set[tuple[str, str]] = set()
+
+        for record in records:
+            code = str(record.get("code") or "").strip()
+            ko_name = str(record.get("ko_name") or "").strip()
+            key = (code, ko_name)
+            if not code or key in seen:
+                continue
+            seen.add(key)
+            deduped.append(record)
+
+        return deduped
 
     def fetch_price(self, symbol: str) -> dict:
         """현재가 조회 (국내/해외 통합)"""
