@@ -359,6 +359,36 @@ class DanteTrader:
 
         return report
 
+    def record_executed_buy(
+        self,
+        company: str,
+        code: str,
+        quantity: int,
+        price: int,
+        stop_loss_price: int | None = None,
+    ) -> dict | None:
+        trade = self._save_trade(company, code, quantity, price, "buy", stop_loss_price=stop_loss_price)
+        if trade:
+            self._record_trade_snapshot(trade, price, phase="entry")
+        return trade
+
+    def record_executed_sell(
+        self,
+        company: str,
+        code: str,
+        quantity: int,
+        price: int,
+        active_trade: dict | None = None,
+    ) -> None:
+        trade = active_trade or self._load_trades().get(code)
+        if trade:
+            self._record_trade_snapshot(trade, price, phase="exit")
+            entry_price = trade["entry_price"]
+            pnl = (price - entry_price) * quantity
+            pnl_rate = (price - entry_price) / entry_price
+            self._save_history(company, code, quantity, entry_price, price, pnl, pnl_rate, trade=trade)
+        self._save_trade(company, code, quantity, price, "sell")
+
     @staticmethod
     def _format_text_table(headers: list[str], rows: list[list[str]]) -> str:
         widths = [len(header) for header in headers]
@@ -374,7 +404,17 @@ class DanteTrader:
         lines.extend(render(row) for row in rows)
         return "```text\n" + "\n".join(lines) + "\n```\n"
 
-    def _save_history(self, company: str, code: str, quantity: int, buy_price: int, sell_price: int, pnl: int, pnl_rate: float):
+    def _save_history(
+        self,
+        company: str,
+        code: str,
+        quantity: int,
+        buy_price: int,
+        sell_price: int,
+        pnl: int,
+        pnl_rate: float,
+        trade: dict | None = None,
+    ):
         history = self._load_history()
         history.append({
             "company": company,
