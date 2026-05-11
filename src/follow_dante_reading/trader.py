@@ -275,6 +275,7 @@ class DanteTrader:
         if active_trades:
             report += "📂 **현재 보유 종목**\n"
             total_eval = 0
+            rows = []
             for code, data in active_trades.items():
                 price_info = self.market_handler.fetch_price(code)
                 curr_price = int(price_info.get("output", {}).get("stck_prpr", 0))
@@ -283,13 +284,22 @@ class DanteTrader:
                 total_eval += curr_price * data['quantity']
                 stop_loss_price = int(data.get("stop_loss_price") or 0)
 
-                emoji = "📈" if eval_pnl >= 0 else "📉"
-                stop_loss_suffix = f", SL {stop_loss_price:,}원" if stop_loss_price > 0 else ""
-                report += (
-                    f"• {data['company']}: {curr_price:,}원 "
-                    f"({emoji} {eval_rate*100:+.2f}%, {eval_pnl:+,}원{stop_loss_suffix})\n"
+                rows.append(
+                    [
+                        data["company"],
+                        str(data["quantity"]),
+                        f"{data['entry_price']:,}",
+                        f"{curr_price:,}",
+                        f"{eval_rate*100:+.2f}%",
+                        f"{eval_pnl:+,}",
+                        f"{stop_loss_price:,}" if stop_loss_price > 0 else "-",
+                    ]
                 )
-            report += f"  (보유종목 총 평가액: {total_eval:,}원)\n\n"
+            report += self._format_text_table(
+                headers=["종목", "수량", "매입가", "현재가", "수익률", "평가손익", "손절가"],
+                rows=rows,
+            )
+            report += f"\n• 보유종목 총 평가액: {total_eval:,}원\n\n"
         else:
             report += "📂 **현재 보유 종목**: 없음\n\n"
 
@@ -308,6 +318,21 @@ class DanteTrader:
             report += "🏁 **최근 실현 손익**: 이력 없음"
 
         return report
+
+    @staticmethod
+    def _format_text_table(headers: list[str], rows: list[list[str]]) -> str:
+        widths = [len(header) for header in headers]
+        for row in rows:
+            for idx, value in enumerate(row):
+                widths[idx] = max(widths[idx], len(value))
+
+        def render(row: list[str]) -> str:
+            return " | ".join(value.ljust(widths[idx]) for idx, value in enumerate(row))
+
+        separator = "-+-".join("-" * width for width in widths)
+        lines = [render(headers), separator]
+        lines.extend(render(row) for row in rows)
+        return "```text\n" + "\n".join(lines) + "\n```\n"
 
     def _save_history(self, company: str, code: str, quantity: int, buy_price: int, sell_price: int, pnl: int, pnl_rate: float):
         history = self._load_history()
