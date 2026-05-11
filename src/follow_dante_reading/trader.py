@@ -71,12 +71,15 @@ class DanteTrader:
     async def _confirm_and_buy(self, company: str, code: str, signal: ReadingSignal):
         """매수 컨펌 및 실행"""
         prompt = (
-            f"📢 **[Trade Confirm]** '{company}'({code})를 매수할까요? "
+            f"'{company}'({code})를 매수할까요? "
             f"(신뢰도: {signal.confidence:.2f})\n"
             f"• 응답: `buy` 또는 `skip` (`y`/`yes`도 가능)\n"
             f"• 원문: {signal.rationale_text[:100]}..."
         )
-        answer = await get_discord_input(prompt)
+        answer = await get_discord_input(
+            prompt,
+            request_label="📢 **[Trade Confirm]**",
+        )
 
         if self._is_trade_confirmed(answer, expected_action="buy"):
             quantity = self.order_quantity
@@ -132,11 +135,14 @@ class DanteTrader:
             return
 
         prompt = (
-            f"📢 **[Trade Confirm]** 보유 중인 '{company}'({code})를 매도할까요?\n"
+            f"보유 중인 '{company}'({code})를 매도할까요?\n"
             f"• 응답: `sell` 또는 `skip` (`y`/`yes`도 가능)\n"
             f"• 원문: {signal.rationale_text[:100]}..."
         )
-        answer = await get_discord_input(prompt)
+        answer = await get_discord_input(
+            prompt,
+            request_label="📢 **[Trade Confirm]**",
+        )
 
         if self._is_trade_confirmed(answer, expected_action="sell"):
             quantity = active_trades[code]["quantity"]
@@ -309,6 +315,7 @@ class DanteTrader:
         if active_trades:
             report += "📂 **현재 보유 종목**\n"
             total_eval = 0
+            rows = []
             for code, data in active_trades.items():
                 price_info = self.market_handler.fetch_price(code)
                 curr_price = int(price_info.get("output", {}).get("stck_prpr", 0))
@@ -317,13 +324,22 @@ class DanteTrader:
                 total_eval += curr_price * data['quantity']
                 stop_loss_price = int(data.get("stop_loss_price") or 0)
 
-                emoji = "📈" if eval_pnl >= 0 else "📉"
-                stop_loss_suffix = f", SL {stop_loss_price:,}원" if stop_loss_price > 0 else ""
-                report += (
-                    f"• {data['company']}: {curr_price:,}원 "
-                    f"({emoji} {eval_rate*100:+.2f}%, {eval_pnl:+,}원{stop_loss_suffix})\n"
+                rows.append(
+                    [
+                        data["company"],
+                        str(data["quantity"]),
+                        f"{data['entry_price']:,}",
+                        f"{curr_price:,}",
+                        f"{eval_rate*100:+.2f}%",
+                        f"{eval_pnl:+,}",
+                        f"{stop_loss_price:,}" if stop_loss_price > 0 else "-",
+                    ]
                 )
-            report += f"  (보유종목 총 평가액: {total_eval:,}원)\n\n"
+            report += self._format_text_table(
+                headers=["종목", "수량", "매입가", "현재가", "수익률", "평가손익", "손절가"],
+                rows=rows,
+            )
+            report += f"\n• 보유종목 총 평가액: {total_eval:,}원\n\n"
         else:
             report += "📂 **현재 보유 종목**: 없음\n\n"
 
@@ -343,47 +359,22 @@ class DanteTrader:
 
         return report
 
-    def record_executed_buy(
-        self,
-        company: str,
-        code: str,
-        quantity: int,
-        price: int,
-        stop_loss_price: int | None = None,
-    ) -> dict | None:
-        trade = self._save_trade(company, code, quantity, price, "buy", stop_loss_price=stop_loss_price)
-        if trade:
-            self._record_trade_snapshot(trade, price, phase="entry")
-        return trade
+    @staticmethod
+    def _format_text_table(headers: list[str], rows: list[list[str]]) -> str:
+        widths = [len(header) for header in headers]
+        for row in rows:
+            for idx, value in enumerate(row):
+                widths[idx] = max(widths[idx], len(value))
 
-    def record_executed_sell(
-        self,
-        company: str,
-        code: str,
-        quantity: int,
-        price: int,
-        active_trade: dict | None = None,
-    ) -> None:
-        trade = active_trade or self._load_trades().get(code)
-        if trade:
-            self._record_trade_snapshot(trade, price, phase="exit")
-            entry_price = trade["entry_price"]
-            pnl = (price - entry_price) * quantity
-            pnl_rate = (price - entry_price) / entry_price
-            self._save_history(company, code, quantity, entry_price, price, pnl, pnl_rate, trade=trade)
-        self._save_trade(company, code, quantity, price, "sell")
+        def render(row: list[str]) -> str:
+            return " | ".join(value.ljust(widths[idx]) for idx, value in enumerate(row))
 
-    def _save_history(
-        self,
-        company: str,
-        code: str,
-        quantity: int,
-        buy_price: int,
-        sell_price: int,
-        pnl: int,
-        pnl_rate: float,
-        trade: dict | None = None,
-    ):
+        separator = "-+-".join("-" * width for width in widths)
+        lines = [render(headers), separator]
+        lines.extend(render(row) for row in rows)
+        return "```text\n" + "\n".join(lines) + "\n```\n"
+
+    def _save_history(self, company: str, code: str, quantity: int, buy_price: int, sell_price: int, pnl: int, pnl_rate: float):
         history = self._load_history()
         history.append({
             "company": company,
