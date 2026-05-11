@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 import os
+import shutil
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -9,9 +9,8 @@ from dotenv import load_dotenv
 from loguru import logger
 import discord
 import anyio
-import anyio.abc
 
-from follow_dante_reading.signal_schema import ReadingMessage, TelegramDialog
+from follow_dante_reading.signal_schema import ReadingMessage, TelegramDialog  # ty:ignore[unresolved-import]
 
 try:
     from telethon import TelegramClient, events
@@ -110,7 +109,7 @@ async def get_discord_input(
     try:
         async with anyio.create_task_group() as tg:
             tg.start_soon(client.start, token)
-            
+
             with anyio.fail_after(300.0):
                 async with receive_stream:
                     result = await receive_stream.receive()
@@ -131,6 +130,7 @@ class TelegramReadingClient:
         api_id: int | None = None,
         api_hash: str | None = None,
         session_path: str | Path = SESSION_BASENAME,
+        use_temp_session: bool = False,
     ):
         resolved_api_id = api_id or _read_api_id_from_env()
         resolved_api_hash = api_hash or _read_api_hash_from_env()
@@ -143,13 +143,22 @@ class TelegramReadingClient:
 
         self.api_id = resolved_api_id
         self.api_hash = resolved_api_hash
-        self.session_path = Path(session_path)
+        original_session_path = Path(session_path)
+        self._temp_session_dir: tempfile.TemporaryDirectory[str] | None = None
+        self.session_path = original_session_path
+
+        if use_temp_session:
+            self._temp_session_dir = tempfile.TemporaryDirectory(prefix="telegram_session_")
+            temp_base = Path(self._temp_session_dir.name) / original_session_path.name
+            _copy_telethon_session(original_session_path, temp_base)
+            self.session_path = temp_base
+
         self.client = TelegramClient(str(self.session_path), self.api_id, self.api_hash)
 
     async def interactive_login(self, via_discord: bool = False) -> None:
         """대화형 로그인을 수행합니다. 세션이 없거나 만료된 경우 핸드폰 번호와 코드를 입력받습니다."""
         logger.info(f"Starting interactive login (via_discord={via_discord})...")
-        
+
         if via_discord:
             await self.client.start(
                 phone=lambda: get_discord_input(
@@ -170,7 +179,7 @@ class TelegramReadingClient:
             )
         else:
             await self.client.start()
-            
+
         me = await self.client.get_me()
         if me:
             logger.info(f"Signed in successfully as {getattr(me, 'first_name', None)} (ID: {me.id})")
@@ -240,14 +249,30 @@ class TelegramReadingClient:
         self,
         chat: str | int,
         limit: int = 100,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
         download_media: bool = True,
         media_dir: str | Path | None = None,
     ) -> list[ReadingMessage]:
         await self.ensure_authorized()
         entity = await self.resolve_entity(chat)
         results: list[ReadingMessage] = []
+        iter_limit = None if limit <= 0 else limit
 
-        async for msg in self.client.iter_messages(entity, limit=limit):
+        normalized_start = _normalize_boundary(start_date)
+        normalized_end = _normalize_boundary(end_date)
+
+        async for msg in self.client.iter_messages(entity, limit=iter_limit):
+            posted_at = _normalize_boundary(getattr(msg, "date", None))
+            if posted_at is None:
+                continue
+
+            if normalized_end and posted_at > normalized_end:
+                continue
+
+            if normalized_start and posted_at < normalized_start:
+                break
+
             parsed = await self._to_reading_message(msg, download_media, media_dir)
             if parsed:
                 results.append(parsed)
@@ -276,6 +301,9 @@ class TelegramReadingClient:
 
     async def close(self) -> None:
         await self.client.disconnect()
+        if self._temp_session_dir is not None:
+            self._temp_session_dir.cleanup()
+            self._temp_session_dir = None
 
     async def _to_reading_message(
         self,
@@ -284,7 +312,10 @@ class TelegramReadingClient:
         media_dir: str | Path | None,
     ) -> ReadingMessage | None:
         text = (message.message or "").strip()
+        logger.debug(f"DEBUG: Processing raw message {message.id}. Text length: {len(text)}, Media: {bool(message.media)}")
+
         if not text and not message.media:
+            logger.debug(f"DEBUG: Message {message.id} skipped (no text/media)")
             return None
 
         media_path = None
@@ -354,3 +385,20 @@ def _read_api_id_from_env() -> int | None:
 
 def _read_api_hash_from_env() -> str | None:
     return os.getenv("api_hash") or os.getenv("TELEGRAM_API_HASH")
+
+
+def _normalize_boundary(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _copy_telethon_session(source_base: Path, target_base: Path) -> None:
+    source_session = source_base.with_suffix(".session")
+    if not source_session.exists():
+        raise FileNotFoundError(f"Telegram session file not found: {source_session}")
+
+    target_base.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_session, target_base.with_suffix(".session"))

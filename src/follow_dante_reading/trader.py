@@ -2,7 +2,7 @@ import anyio
 import anyio.abc
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from loguru import logger
 from tenacity import AsyncRetrying, wait_exponential, stop_after_attempt, retry_if_exception_type
@@ -19,11 +19,13 @@ class DanteTrader:
         self.notifier = notifier or Notifier()
         self.active_trades_path = project_root() / "data" / "follow_dante_reading" / "active_trades.json"
         self.trade_history_path = project_root() / "data" / "follow_dante_reading" / "trade_history.json"
+        self.trade_tracking_path = project_root() / "data" / "follow_dante_reading" / "trade_price_tracking.json"
         self.active_trades_path.parent.mkdir(parents=True, exist_ok=True)
         self.is_mock = is_mock
         self.default_stop_loss_pct = float(os.getenv("DANTE_DEFAULT_STOP_LOSS_PCT", "0.05"))
         self.order_quantity = int(os.getenv("DANTE_ORDER_QUANTITY", "1"))
         self.holdings_poll_seconds = int(os.getenv("DANTE_HOLDINGS_POLL_SECONDS", "300"))
+        self.price_tracking_minutes = int(os.getenv("DANTE_PRICE_TRACKING_MINUTES", "15"))
         self.auto_stop_loss_enabled = os.getenv("DANTE_AUTO_STOP_LOSS_ENABLED", "true").lower() == "true"
         if self.is_mock:
             logger.info("DanteTrader initialized in MOCK MODE (No real trades)")
@@ -32,6 +34,7 @@ class DanteTrader:
             f"order_quantity={self.order_quantity}, "
             f"default_stop_loss_pct={self.default_stop_loss_pct:.4f}, "
             f"holdings_poll_seconds={self.holdings_poll_seconds}, "
+            f"price_tracking_minutes={self.price_tracking_minutes}, "
             f"auto_stop_loss_enabled={self.auto_stop_loss_enabled}, "
             f"is_mock={self.is_mock}"
         )
@@ -99,12 +102,12 @@ class DanteTrader:
                 )
                 await self.notifier.notify_all(success_msg)
                 await self.notifier.notify_diary(f"✅ [Mock Buy Success] {company} @ {price:,}원 (SL: {sl_price:,}원)")
-                self._save_trade(company, code, quantity, price, "buy", stop_loss_price=sl_price)
+                self.record_executed_buy(company, code, quantity, price, sl_price)
             else:
                 # 실제 투자
                 res = self.market_handler.create_market_buy_order(code, quantity)
                 if res.get("rt_cd") == "0":
-                    price = self._extract_price(res)
+                    price = self._extract_price(res, fallback_code=code)
                     sl_price = int(price * (1 - sl_pct))
 
                     success_msg = (
@@ -116,7 +119,7 @@ class DanteTrader:
                     await self.notifier.notify_diary(f"✅ [Buy Success] {company} @ {price:,}원 (SL: {sl_price:,}원)")
 
                     # 실제 예약 매도 주문 로직 (KIS API에 따라 구현 필요, 여기서는 기록 후 감시)
-                    self._save_trade(company, code, quantity, price, "buy", stop_loss_price=sl_price)
+                    self.record_executed_buy(company, code, quantity, price, sl_price)
                 else:
                     fail_msg = f"❌ **[Buy Fail]** {company} 매수 실패: {res.get('msg1')}"
                     await self.notifier.notify_all(fail_msg)
@@ -151,22 +154,15 @@ class DanteTrader:
                 price = int(price_info.get("output", {}).get("stck_prpr", 0))
                 success_msg = f"🍦 **[Mock Sell]** {company} {quantity}주 매도 시뮬레이션 완료 (매도가: {price:,}원)"
                 await self.notifier.notify_all(success_msg)
-                self._save_trade(company, code, quantity, price, "sell")
+                self.record_executed_sell(company, code, quantity, price, active_trade=active_trades[code])
             else:
                 # 실제 투자
                 res = self.market_handler.create_market_sell_order(code, quantity)
                 if res.get("rt_cd") == "0":
-                    price = self._extract_price(res)
+                    price = self._extract_price(res, fallback_code=code)
                     success_msg = f"✅ **[Sell Success]** {company} {quantity}주 전량 매도 완료 (매도가: {price:,}원)"
                     await self.notifier.notify_all(success_msg)
-
-                    # 매도 성공 시 이력 저장 (실현 손익 계산 포함)
-                    entry_price = active_trades[code]["entry_price"]
-                    pnl = (price - entry_price) * quantity
-                    pnl_rate = (price - entry_price) / entry_price
-                    self._save_history(company, code, quantity, entry_price, price, pnl, pnl_rate)
-
-                    self._save_trade(company, code, quantity, price, "sell")
+                    self.record_executed_sell(company, code, quantity, price, active_trade=active_trades[code])
                 else:
                     fail_msg = f"❌ **[Sell Fail]** {company} 매도 실패: {res.get('msg1')}"
                     await self.notifier.notify_all(fail_msg)
@@ -200,6 +196,50 @@ class DanteTrader:
                 logger.error(f"Error in tracking loop: {e}")
 
             await anyio.sleep(self.holdings_poll_seconds)
+
+    async def track_trade_prices_loop(self):
+        """체결된 보유 종목을 15분 단위로 가격 추적합니다."""
+        interval_seconds = max(self.price_tracking_minutes, 1) * 60
+        logger.info(
+            "Starting trade price tracking loop (Interval: {} minutes)",
+            self.price_tracking_minutes,
+        )
+        while True:
+            try:
+                await self.track_trade_prices()
+            except Exception as e:
+                logger.error(f"Error in trade price tracking loop: {e}")
+
+            await anyio.sleep(interval_seconds)
+
+    async def track_trade_prices(self):
+        active_trades = self._load_trades()
+        if not active_trades:
+            return
+
+        for code, trade in active_trades.items():
+            if not self._is_tracking_due(trade):
+                continue
+
+            price_info = self.market_handler.fetch_price(code)
+            current_price = int(float(price_info.get("output", {}).get("stck_prpr", 0)))
+            if current_price <= 0:
+                continue
+
+            tracked_at = datetime.now()
+            self._record_trade_snapshot(trade, current_price, phase="interval", tracked_at=tracked_at)
+            self._update_trade_tracking_state(code, current_price, tracked_at)
+
+            entry_price = trade["entry_price"]
+            profit_rate = ((current_price - entry_price) / entry_price) * 100 if entry_price else 0.0
+            await self.notifier.notify_diary(
+                f"⏱️ [Auto Trading Log] {trade['company']}({code}) "
+                f"{self.price_tracking_minutes}분 추적\n"
+                f"• 기준가: {entry_price:,}원\n"
+                f"• 현재가: {current_price:,}원\n"
+                f"• 수익률: {profit_rate:+.2f}%\n"
+                f"• 시각: {tracked_at.isoformat(timespec='seconds')}"
+            )
 
     async def report_holdings(self, tg: anyio.abc.TaskGroup):
         """현재 보유 종목의 수익률 현황을 Discord로 보고합니다."""
@@ -344,6 +384,8 @@ class DanteTrader:
             "sell_price": sell_price,
             "pnl": pnl,
             "pnl_rate": pnl_rate,
+            "trade_id": trade.get("trade_id") if trade else None,
+            "entry_at": trade.get("entry_at") if trade else None,
             "closed_at": datetime.now().isoformat()
         })
         with open(self.trade_history_path, "w", encoding="utf-8") as f:
@@ -376,26 +418,21 @@ class DanteTrader:
                 )
                 await self.notifier.notify_all(success_msg)
                 await self.notifier.notify_diary(f"✅ [Mock Stop Loss] {company} @ {price:,}원")
-                pnl = (price - entry_price) * quantity
-                pnl_rate = (price - entry_price) / entry_price
-                self._save_history(company, code, quantity, entry_price, price, pnl, pnl_rate)
-                self._save_trade(company, code, quantity, price, "sell")
+                active_trade = self._load_trades().get(code)
+                self.record_executed_sell(company, code, quantity, price, active_trade=active_trade)
                 return
 
             res = self.market_handler.create_market_sell_order(code, quantity)
             if res.get("rt_cd") == "0":
-                price = self._extract_price(res) or int(current_price)
+                price = self._extract_price(res, fallback_code=code) or int(current_price)
                 success_msg = (
                     f"🛑 **[Stop Loss Sell Success]** {company} {quantity}주 자동 손절 완료 "
                     f"(매도가: {price:,}원)"
                 )
                 await self.notifier.notify_all(success_msg)
                 await self.notifier.notify_diary(f"🛑 [Stop Loss Sold] {company} @ {price:,}원")
-
-                pnl = (price - entry_price) * quantity
-                pnl_rate = (price - entry_price) / entry_price
-                self._save_history(company, code, quantity, entry_price, price, pnl, pnl_rate)
-                self._save_trade(company, code, quantity, price, "sell")
+                active_trade = self._load_trades().get(code)
+                self.record_executed_sell(company, code, quantity, price, active_trade=active_trade)
             else:
                 self._mark_trade_stop_loss_pending(code, False)
                 fail_msg = f"❌ **[Stop Loss Sell Fail]** {company} 자동 손절 실패: {res.get('msg1')}"
@@ -404,16 +441,30 @@ class DanteTrader:
             self._mark_trade_stop_loss_pending(code, False)
             await self.notifier.notify_all(f"❌ **[Stop Loss Exception]** {company}: {exc}")
 
-    def _save_trade(self, company: str, code: str, quantity: int, price: int, action: str, stop_loss_price: int | None = None):
+    def _save_trade(
+        self,
+        company: str,
+        code: str,
+        quantity: int,
+        price: int,
+        action: str,
+        stop_loss_price: int | None = None,
+    ) -> dict | None:
         trades = self._load_trades()
         if action == "buy":
+            entry_at = datetime.now().isoformat()
             trades[code] = {
+                "trade_id": self._make_trade_id(code, entry_at),
                 "company": company,
+                "code": code,
                 "quantity": quantity,
                 "entry_price": price,
                 "stop_loss_price": stop_loss_price,
                 "stop_loss_pending": False,
-                "entry_at": datetime.now().isoformat()
+                "entry_at": entry_at,
+                "last_tracked_at": entry_at,
+                "last_tracked_price": price,
+                "tracking_interval_minutes": self.price_tracking_minutes,
             }
         elif action == "sell":
             if code in trades:
@@ -421,6 +472,7 @@ class DanteTrader:
 
         with open(self.active_trades_path, "w", encoding="utf-8") as f:
             json.dump(trades, f, ensure_ascii=False, indent=2)
+        return trades.get(code)
 
     def _load_trades(self) -> dict:
         if not self.active_trades_path.exists():
@@ -444,10 +496,86 @@ class DanteTrader:
         with open(self.active_trades_path, "w", encoding="utf-8") as f:
             json.dump(trades, f, ensure_ascii=False, indent=2)
 
-    def _extract_price(self, res: dict) -> int:
+    def _record_trade_snapshot(
+        self,
+        trade: dict,
+        current_price: int,
+        phase: str,
+        tracked_at: datetime | None = None,
+    ):
+        tracked_at = tracked_at or datetime.now()
+        history = self._load_tracking_history()
+        entry_price = int(trade["entry_price"])
+        quantity = int(trade["quantity"])
+        profit_amount = (current_price - entry_price) * quantity
+        profit_rate = (current_price - entry_price) / entry_price if entry_price else 0.0
+
+        history.append(
+            {
+                "trade_id": trade.get("trade_id"),
+                "company": trade["company"],
+                "code": trade.get("code") or trade.get("pdno"),
+                "quantity": quantity,
+                "entry_price": entry_price,
+                "current_price": current_price,
+                "profit_amount": profit_amount,
+                "profit_rate": profit_rate,
+                "phase": phase,
+                "tracked_at": tracked_at.isoformat(),
+                "entry_at": trade.get("entry_at"),
+            }
+        )
+
+        with open(self.trade_tracking_path, "w", encoding="utf-8") as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+
+    def _load_tracking_history(self) -> list[dict]:
+        if not self.trade_tracking_path.exists():
+            return []
+        try:
+            with open(self.trade_tracking_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+
+    def _is_tracking_due(self, trade: dict) -> bool:
+        last_tracked_at_raw = trade.get("last_tracked_at")
+        if not last_tracked_at_raw:
+            return True
+
+        try:
+            last_tracked_at = datetime.fromisoformat(last_tracked_at_raw)
+        except ValueError:
+            return True
+
+        next_tracking_at = last_tracked_at + timedelta(minutes=self.price_tracking_minutes)
+        return datetime.now() >= next_tracking_at
+
+    def _update_trade_tracking_state(self, code: str, current_price: int, tracked_at: datetime):
+        trades = self._load_trades()
+        trade = trades.get(code)
+        if not trade:
+            return
+
+        trade["last_tracked_at"] = tracked_at.isoformat()
+        trade["last_tracked_price"] = current_price
+        trade["last_profit_rate"] = (
+            (current_price - trade["entry_price"]) / trade["entry_price"]
+            if trade.get("entry_price")
+            else 0.0
+        )
+
+        with open(self.active_trades_path, "w", encoding="utf-8") as f:
+            json.dump(trades, f, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def _make_trade_id(code: str, entry_at: str) -> str:
+        return f"{code}:{entry_at}"
+
+    def _extract_price(self, res: dict, fallback_code: str | None = None) -> int:
         # KIS 주문 결과에서 가격 추출 (실제로는 체결 결과를 확인해야 정확하지만, 편의상 현재가 기반으로 추정하거나 응답에서 확인)
         # 시장가 주문의 경우 응답에 가격이 즉시 안 올 수 있으므로 현재가를 다시 조회하는 것이 안전
-        code = res.get("output", {}).get("pdno")
+        code = res.get("output", {}).get("pdno") or fallback_code
         if code:
             price_info = self.market_handler.fetch_price(code)
             return int(price_info.get("output", {}).get("stck_prpr", 0))

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pathlib import Path
 
 import yaml
@@ -45,4 +43,3 @@ def resolve_chat_reference(chat: str | int, aliases: dict[str, dict]) -> str | i
         return str(matched["username"])
 
     raise ValueError(f"Chat alias '{raw}' exists but has no chat_id or username")
-

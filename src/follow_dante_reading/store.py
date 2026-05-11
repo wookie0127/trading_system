@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 from pathlib import Path
 
@@ -26,4 +24,3 @@ class ReadingStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as fp:
             fp.write(json.dumps(payload, ensure_ascii=False) + "\n")
-

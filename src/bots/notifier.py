@@ -1,4 +1,5 @@
 import os
+import json
 import httpx
 from slack_sdk import WebClient
 from loguru import logger
@@ -53,9 +54,14 @@ class Notifier:
             logger.error(f"Failed to send Slack message: {e}")
             return False
 
-    async def send_discord_async(self, text: str, channel_id: str | None = None):
+    async def send_discord_async(
+        self,
+        text: str,
+        channel_id: str | None = None,
+        attachment_paths: list[str] | None = None,
+    ):
         # 1. Webhook 방식 (channel_id가 없을 때만 사용)
-        if self.discord_webhook_url and not channel_id:
+        if self.discord_webhook_url and not channel_id and not attachment_paths:
             try:
                 async with httpx.AsyncClient() as client:
                     response = await client.post(self.discord_webhook_url, json={"content": text})
@@ -68,12 +74,41 @@ class Notifier:
         # 2. Bot REST API 방식
         target_channel = channel_id or self.discord_channel_id
         if self.discord_token and target_channel:
+            existing_files = [
+                Path(path) for path in (attachment_paths or [])
+                if path and Path(path).exists()
+            ]
             try:
                 headers = {"Authorization": f"Bot {self.discord_token}"}
                 url = f"https://discord.com/api/v10/channels/{target_channel}/messages"
-                
+
                 async with httpx.AsyncClient() as client:
-                    response = await client.post(url, headers=headers, json={"content": text})
+                    if existing_files:
+                        files = []
+                        handles = []
+                        try:
+                            for index, file_path in enumerate(existing_files):
+                                file_handle = file_path.open("rb")
+                                handles.append(file_handle)
+                                files.append(
+                                    (
+                                        f"files[{index}]",
+                                        (file_path.name, file_handle, "application/octet-stream"),
+                                    )
+                                )
+
+                            payload = {"content": text}
+                            response = await client.post(
+                                url,
+                                headers=headers,
+                                data={"payload_json": json.dumps(payload, ensure_ascii=False)},
+                                files=files,
+                            )
+                        finally:
+                            for handle in handles:
+                                handle.close()
+                    else:
+                        response = await client.post(url, headers=headers, json={"content": text})
                     response.raise_for_status()
                     logger.info(f"Discord message sent to channel {target_channel}.")
                     return True
