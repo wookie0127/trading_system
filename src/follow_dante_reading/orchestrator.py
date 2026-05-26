@@ -322,7 +322,9 @@ class DanteReadingOrchestrator:
 
         # 2. 파싱된 신호 알림 (ignore가 아닐 때만)
         if signal.action != "ignore" and notify:
-            await self.notifier.notify_diary(self._format_signal(signal))
+            formatted_signal = self._format_signal(signal)
+            await self.notifier.notify_diary(formatted_signal)
+            await self.notifier.notify_all(formatted_signal)
 
         # 매매 신호 처리 (트레이더 호출, TaskGroup 전달)
         await self.trader.handle_signal(signal, tg=tg)

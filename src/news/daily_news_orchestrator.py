@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import httpx
 import yaml
@@ -25,6 +26,7 @@ DEFAULT_FEEDS = [
 DEFAULT_MODEL = "gpt-5-mini"
 DEFAULT_OUTPUT_DIR = Path("data/news_summaries")
 DEFAULT_MAX_ITEMS = 20
+DEFAULT_NEWS_TIMEZONE = "Asia/Seoul"
 
 KEY_PATH = Path.home() / ".ssh" / "kis"
 load_dotenv(KEY_PATH)
@@ -51,6 +53,14 @@ def _env_list(name: str, default: list[str]) -> list[str]:
     if not raw:
         return default
     return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _news_timezone() -> ZoneInfo:
+    return ZoneInfo(os.getenv("NEWS_TIMEZONE", DEFAULT_NEWS_TIMEZONE))
+
+
+def _current_news_datetime() -> datetime:
+    return datetime.now(_news_timezone())
 
 
 def _parse_pub_date(raw: str | None) -> datetime:
@@ -247,7 +257,7 @@ def persist_summary_task(markdown_text: str, output_dir: str, run_date: str, mod
     target_dir = Path(output_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    generated_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    generated_at = _current_news_datetime().isoformat(timespec="seconds")
     full_markdown = build_archive_markdown(
         run_date=run_date,
         generated_at=generated_at,
@@ -274,7 +284,7 @@ async def daily_news_summary_flow(
     resolved_model = model or os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
     resolved_output_dir = output_dir or os.getenv("NEWS_SUMMARY_DIR", str(DEFAULT_OUTPUT_DIR))
     resolved_max_items = max_items or int(os.getenv("NEWS_MAX_ITEMS", str(DEFAULT_MAX_ITEMS)))
-    run_date = datetime.now().astimezone().date().isoformat()
+    run_date = _current_news_datetime().date().isoformat()
 
     logger.info(
         "Starting daily news summary flow "

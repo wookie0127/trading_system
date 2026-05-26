@@ -2,7 +2,8 @@ import anyio
 import anyio.abc
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from loguru import logger
 from tenacity import AsyncRetrying, wait_exponential, stop_after_attempt, retry_if_exception_type
@@ -22,6 +23,9 @@ class DanteTrader:
         self.trade_tracking_path = project_root() / "data" / "follow_dante_reading" / "trade_price_tracking.json"
         self.active_trades_path.parent.mkdir(parents=True, exist_ok=True)
         self.is_mock = is_mock
+        self.market_timezone = ZoneInfo(os.getenv("DANTE_MARKET_TIMEZONE", "Asia/Seoul"))
+        self.market_open_time = time(9, 0)
+        self.market_close_time = time(15, 30)
         self.default_stop_loss_pct = float(os.getenv("DANTE_DEFAULT_STOP_LOSS_PCT", "0.05"))
         self.order_quantity = int(os.getenv("DANTE_ORDER_QUANTITY", "1"))
         self.holdings_poll_seconds = int(os.getenv("DANTE_HOLDINGS_POLL_SECONDS", "300"))
@@ -33,6 +37,9 @@ class DanteTrader:
             "DanteTrader config: "
             f"order_quantity={self.order_quantity}, "
             f"default_stop_loss_pct={self.default_stop_loss_pct:.4f}, "
+            f"market_timezone={self.market_timezone.key}, "
+            f"market_open_time={self.market_open_time.strftime('%H:%M')}, "
+            f"market_close_time={self.market_close_time.strftime('%H:%M')}, "
             f"holdings_poll_seconds={self.holdings_poll_seconds}, "
             f"price_tracking_minutes={self.price_tracking_minutes}, "
             f"auto_stop_loss_enabled={self.auto_stop_loss_enabled}, "
@@ -217,6 +224,11 @@ class DanteTrader:
         if not active_trades:
             return
 
+        now = self._now_market_tz()
+        if not self._is_regular_market_open(now):
+            await self._send_post_market_briefings(active_trades, now)
+            return
+
         for code, trade in active_trades.items():
             if not self._is_tracking_due(trade):
                 continue
@@ -241,8 +253,26 @@ class DanteTrader:
                 f"• 시각: {tracked_at.isoformat(timespec='seconds')}"
             )
 
+    async def _send_post_market_briefings(self, active_trades: dict, now: datetime) -> None:
+        if not self._should_send_post_market_briefing(now):
+            return
+
+        for code, trade in active_trades.items():
+            if trade.get("last_daily_briefing_date") == now.date().isoformat():
+                continue
+
+            briefing = self._build_post_market_briefing(code, trade, now.date())
+            if not briefing:
+                continue
+
+            await self.notifier.notify_diary(briefing)
+            self._mark_trade_daily_briefing_sent(code, now.date())
+
     async def report_holdings(self, tg: anyio.abc.TaskGroup):
         """현재 보유 종목의 수익률 현황을 Discord로 보고합니다."""
+        if not self._is_regular_market_open():
+            return
+
         # API 호출 안정성을 위해 tenacity 적용
         async for attempt in AsyncRetrying(
             wait=wait_exponential(multiplier=1, min=2, max=10),
@@ -591,6 +621,78 @@ class DanteTrader:
         next_tracking_at = last_tracked_at + timedelta(minutes=self.price_tracking_minutes)
         return datetime.now() >= next_tracking_at
 
+    def _now_market_tz(self) -> datetime:
+        return datetime.now(self.market_timezone)
+
+    def _is_regular_market_open(self, now: datetime | None = None) -> bool:
+        now = now or self._now_market_tz()
+        if now.weekday() >= 5:
+            return False
+        current_time = now.time()
+        return self.market_open_time <= current_time <= self.market_close_time
+
+    def _should_send_post_market_briefing(self, now: datetime | None = None) -> bool:
+        now = now or self._now_market_tz()
+        return now.weekday() < 5 and now.time() > self.market_close_time
+
+    def _build_post_market_briefing(self, code: str, trade: dict, trade_date: date) -> str | None:
+        price_info = self.market_handler.fetch_price(code)
+        output = price_info.get("output", {})
+        current_price = self._to_int(output.get("stck_prpr"))
+        if current_price <= 0:
+            return None
+
+        entry_price = int(trade["entry_price"])
+        quantity = int(trade["quantity"])
+        profit_amount = (current_price - entry_price) * quantity
+        profit_rate = ((current_price - entry_price) / entry_price) * 100 if entry_price else 0.0
+
+        investor_flow = self._extract_investor_flow_snapshot(code)
+        volume = self._to_int(investor_flow.get("volume"))
+        trade_value = self._to_int(investor_flow.get("trade_value"))
+        foreign_buy = self._to_int(investor_flow.get("foreign_buy"))
+        foreign_sell = self._to_int(investor_flow.get("foreign_sell"))
+        foreign_net = self._to_int(investor_flow.get("foreign_net"))
+        institution_buy = self._to_int(investor_flow.get("institution_buy"))
+        institution_sell = self._to_int(investor_flow.get("institution_sell"))
+        institution_net = institution_buy - institution_sell
+
+        return (
+            f"🧾 **[Daily Briefing]** {trade['company']}({code}) {trade_date.isoformat()}\n"
+            f"• 매입가: {entry_price:,}원 / 종가 기준 현재가: {current_price:,}원\n"
+            f"• 보유수량: {quantity}주 / 평가손익: {profit_amount:+,}원 ({profit_rate:+.2f}%)\n"
+            f"• 거래량: {volume:,} / 거래대금: {trade_value:,}\n"
+            f"• 외국인: 매수 {foreign_buy:,} / 매도 {foreign_sell:,} / 순매수 {foreign_net:+,}\n"
+            f"• 기관: 매수 {institution_buy:,} / 매도 {institution_sell:,} / 순매수 {institution_net:+,}\n"
+            f"• 장 종료 후에는 15분 추적 대신 일일 브리핑으로 마감합니다."
+        )
+
+    def _extract_investor_flow_snapshot(self, code: str) -> dict:
+        payload = self.market_handler.fetch_investor_flow(code)
+        raw = payload.get("output1") or payload.get("output") or {}
+        row = raw[0] if isinstance(raw, list) and raw else raw
+        if not isinstance(row, dict):
+            return {}
+
+        return {
+            "foreign_buy": row.get("frgn_buy_vol"),
+            "foreign_sell": row.get("frgn_sel_vol"),
+            "foreign_net": row.get("frgn_ntby_qty"),
+            "institution_buy": row.get("orgn_buy_vol"),
+            "institution_sell": row.get("orgn_sel_vol"),
+            "volume": row.get("acml_vol"),
+            "trade_value": row.get("acml_tr_pbmn"),
+        }
+
+    @staticmethod
+    def _to_int(value: object) -> int:
+        if value in (None, ""):
+            return 0
+        try:
+            return int(float(str(value).replace(",", "").strip()))
+        except (TypeError, ValueError):
+            return 0
+
     def _update_trade_tracking_state(self, code: str, current_price: int, tracked_at: datetime):
         trades = self._load_trades()
         trade = trades.get(code)
@@ -604,6 +706,17 @@ class DanteTrader:
             if trade.get("entry_price")
             else 0.0
         )
+
+        with open(self.active_trades_path, "w", encoding="utf-8") as f:
+            json.dump(trades, f, ensure_ascii=False, indent=2)
+
+    def _mark_trade_daily_briefing_sent(self, code: str, trade_date: date):
+        trades = self._load_trades()
+        trade = trades.get(code)
+        if not trade:
+            return
+
+        trade["last_daily_briefing_date"] = trade_date.isoformat()
 
         with open(self.active_trades_path, "w", encoding="utf-8") as f:
             json.dump(trades, f, ensure_ascii=False, indent=2)
