@@ -24,6 +24,8 @@ class DanteTrader:
         self.trade_tracking_path = project_root() / "data" / "follow_dante_reading" / "trade_price_tracking.json"
         self.scheduled_orders_path = project_root() / "data" / "follow_dante_reading" / "scheduled_orders.json"
         self.autonomous_state_path = project_root() / "data" / "follow_dante_reading" / "autonomous_strategy_state.json"
+        self.investment_journal_path = project_root() / "data" / "follow_dante_reading" / "investment_journal.jsonl"
+        self.daily_reviews_path = project_root() / "data" / "follow_dante_reading" / "daily_reviews.json"
         self.active_trades_path.parent.mkdir(parents=True, exist_ok=True)
         self.is_mock = is_mock
         self.market_timezone = ZoneInfo(os.getenv("DANTE_MARKET_TIMEZONE", "Asia/Seoul"))
@@ -43,12 +45,18 @@ class DanteTrader:
         self.signal_strategy = os.getenv("DANTE_SIGNAL_STRATEGY", "confirm").strip().lower()
         self.llm_auto_buy_min_confidence = float(os.getenv("DANTE_LLM_AUTO_BUY_MIN_CONFIDENCE", "0.85"))
         self.llm_auto_sell_min_confidence = float(os.getenv("DANTE_LLM_AUTO_SELL_MIN_CONFIDENCE", "0.75"))
+        self.llm_daytrade_buy_min_confidence = float(os.getenv("DANTE_LLM_DAYTRADE_BUY_MIN_CONFIDENCE", str(self.llm_auto_buy_min_confidence)))
+        self.llm_swing_buy_min_confidence = float(os.getenv("DANTE_LLM_SWING_BUY_MIN_CONFIDENCE", "0.90"))
+        self.daytrade_stop_loss_pct = self._parse_stop_loss_pct(os.getenv("DANTE_DAYTRADE_STOP_LOSS_PCT", "3%"))
+        self.swing_stop_loss_pct = self._parse_stop_loss_pct(os.getenv("DANTE_SWING_STOP_LOSS_PCT", "7%"))
         self.llm_auto_buy_requires_stop_loss = (
             os.getenv("DANTE_LLM_AUTO_BUY_REQUIRES_STOP_LOSS", "true").lower() == "true"
         )
         self.llm_auto_max_buys_per_day = int(os.getenv("DANTE_LLM_AUTO_MAX_BUYS_PER_DAY", "3"))
         self.llm_auto_max_active_positions = int(os.getenv("DANTE_LLM_AUTO_MAX_ACTIVE_POSITIONS", "5"))
         self.llm_auto_symbol_cooldown_minutes = int(os.getenv("DANTE_LLM_AUTO_SYMBOL_COOLDOWN_MINUTES", "60"))
+        self.daily_review_poll_seconds = int(os.getenv("DANTE_DAILY_REVIEW_POLL_SECONDS", "300"))
+        self.daily_review_time = self._parse_hhmm(os.getenv("DANTE_DAILY_REVIEW_TIME", "15:45"))
         if self.is_mock:
             logger.info("DanteTrader initialized in MOCK MODE (No real trades)")
         logger.info(
@@ -66,37 +74,46 @@ class DanteTrader:
             f"signal_strategy={self.signal_strategy}, "
             f"llm_auto_buy_min_confidence={self.llm_auto_buy_min_confidence}, "
             f"llm_auto_sell_min_confidence={self.llm_auto_sell_min_confidence}, "
+            f"llm_daytrade_buy_min_confidence={self.llm_daytrade_buy_min_confidence}, "
+            f"llm_swing_buy_min_confidence={self.llm_swing_buy_min_confidence}, "
+            f"daytrade_stop_loss_pct={self.daytrade_stop_loss_pct}, "
+            f"swing_stop_loss_pct={self.swing_stop_loss_pct}, "
             f"llm_auto_buy_requires_stop_loss={self.llm_auto_buy_requires_stop_loss}, "
             f"llm_auto_max_buys_per_day={self.llm_auto_max_buys_per_day}, "
             f"llm_auto_max_active_positions={self.llm_auto_max_active_positions}, "
             f"llm_auto_symbol_cooldown_minutes={self.llm_auto_symbol_cooldown_minutes}, "
+            f"daily_review_time={self.daily_review_time.strftime('%H:%M')}, "
             f"is_mock={self.is_mock}"
         )
 
     async def handle_signal(self, signal: ReadingSignal, tg: anyio.abc.TaskGroup | None = None):
         """매매 신호를 처리하고 필요 시 Discord 컨펌을 요청합니다."""
         # 1. 시그널 요약 다이어리에 기록
-        summary_msg = f"📔 **[Dante Diary]** {signal.company_name or '시황 요약'}\n• 요약: {signal.summary}\n• 판단: {signal.action} (신뢰도: {signal.confidence:.2f})\n• 근거: {signal.rationale_text}"
+        summary_msg = f"📔 **[Dante Diary]** {signal.company_name or '시황 요약'}\n• 요약: {signal.summary}\n• 판단: {signal.action} / {signal.trade_style} (신뢰도: {signal.confidence:.2f})\n• 근거: {signal.rationale_text}"
         await self.notifier.notify_diary(summary_msg)
 
         # 2. 매매 액션 처리
         if signal.action == "ignore":
+            self._record_investment_journal(signal, code=None, decision="ignored", reason="action_ignore")
             return
 
         company = signal.company_name
         if not company:
             logger.info(f"Signal action is {signal.action} but company name is missing. Skipping trade.")
+            self._record_investment_journal(signal, code=None, decision="skipped", reason="missing_company")
             return
 
         code = self.market_handler.get_code(company)
         if not code:
             logger.warning(f"Could not find code for {company}. Skipping trade.")
+            self._record_investment_journal(signal, code=None, decision="skipped", reason="missing_code")
             return
 
         if signal.action == "buy_candidate":
             active_trades = self._load_trades()
             if code in active_trades:
                 logger.info(f"{company}({code}) is already in active trades. Skipping duplicate buy.")
+                self._record_investment_journal(signal, code=code, decision="skipped", reason="duplicate_active_trade")
                 return
             if self._should_auto_execute_signal(
                 signal,
@@ -104,13 +121,17 @@ class DanteTrader:
                 code=code,
                 active_trades=active_trades,
             ):
+                self._record_investment_journal(signal, code=code, decision="auto_buy_attempt", reason="auto_gate_passed")
                 await self._auto_buy(company, code, signal)
                 return
+            self._record_investment_journal(signal, code=code, decision="confirm_buy_requested", reason="auto_gate_not_passed")
             await self._confirm_and_buy(company, code, signal)
         elif signal.action == "sell":
             if self._should_auto_execute_signal(signal, expected_action="sell"):
+                self._record_investment_journal(signal, code=code, decision="auto_sell_attempt", reason="auto_gate_passed")
                 await self._auto_sell(company, code, signal)
                 return
+            self._record_investment_journal(signal, code=code, decision="confirm_sell_requested", reason="auto_gate_not_passed")
             await self._confirm_and_sell(company, code, signal)
 
     async def _auto_buy(self, company: str, code: str, signal: ReadingSignal):
@@ -119,7 +140,8 @@ class DanteTrader:
             company,
             code,
             quantity,
-            stop_loss_pct=signal.stop_loss_pct,
+            stop_loss_pct=self._resolve_signal_stop_loss_pct(signal),
+            trade_style=signal.trade_style,
         )
         prefix = (
             f"🤖 **[LLM Auto Buy]** {company}({code})\n"
@@ -179,7 +201,7 @@ class DanteTrader:
                 price = int(price_info.get("output", {}).get("stck_prpr", 0))
                 sl_price, sl_label = self._resolve_stop_loss(
                     entry_price=price,
-                    stop_loss_pct=signal.stop_loss_pct,
+                    stop_loss_pct=self._resolve_signal_stop_loss_pct(signal),
                 )
 
                 success_msg = (
@@ -192,7 +214,7 @@ class DanteTrader:
                     f"✅ [Mock Buy Success] {company} @ {price:,}원 "
                     f"(SL: {self._format_stop_loss_price(sl_price)})"
                 )
-                self.record_executed_buy(company, code, quantity, price, sl_price)
+                self.record_executed_buy(company, code, quantity, price, sl_price, trade_style=signal.trade_style)
             else:
                 # 실제 투자
                 res = self.market_handler.create_market_buy_order(code, quantity)
@@ -200,7 +222,7 @@ class DanteTrader:
                     price = self._extract_price(res, fallback_code=code)
                     sl_price, sl_label = self._resolve_stop_loss(
                         entry_price=price,
-                        stop_loss_pct=signal.stop_loss_pct,
+                        stop_loss_pct=self._resolve_signal_stop_loss_pct(signal),
                     )
 
                     success_msg = (
@@ -215,7 +237,7 @@ class DanteTrader:
                     )
 
                     # 실제 예약 매도 주문 로직 (KIS API에 따라 구현 필요, 여기서는 기록 후 감시)
-                    self.record_executed_buy(company, code, quantity, price, sl_price)
+                    self.record_executed_buy(company, code, quantity, price, sl_price, trade_style=signal.trade_style)
                 else:
                     fail_msg = f"❌ **[Buy Fail]** {company} 매수 실패: {res.get('msg1')}"
                     await self.notifier.notify_all(fail_msg)
@@ -278,6 +300,38 @@ class DanteTrader:
 
             await anyio.sleep(self.scheduled_orders_poll_seconds)
 
+    async def daily_review_loop(self):
+        logger.info(
+            "Starting daily review loop (Time: {}, Poll: {} seconds)",
+            self.daily_review_time.strftime("%H:%M"),
+            self.daily_review_poll_seconds,
+        )
+        while True:
+            try:
+                await self.process_daily_review()
+            except Exception as e:
+                logger.error(f"Error in daily review loop: {e}")
+
+            await anyio.sleep(self.daily_review_poll_seconds)
+
+    async def process_daily_review(self) -> None:
+        now = self._now_market_tz()
+        if now.time() < self.daily_review_time:
+            return
+
+        review_date = now.date().isoformat()
+        reviews = self._load_daily_reviews()
+        if review_date in reviews:
+            return
+
+        review = self._build_daily_review(now.date())
+        reviews[review_date] = {
+            "created_at": now.isoformat(),
+            "review": review,
+        }
+        self._save_daily_reviews(reviews)
+        await self.notifier.notify_diary(review)
+
     @staticmethod
     def _is_trade_confirmed(answer: str, expected_action: str) -> bool:
         normalized = answer.strip().lower()
@@ -308,11 +362,12 @@ class DanteTrader:
         if expected_action == "buy":
             if signal.action != "buy_candidate":
                 return False
-            if signal.confidence < self.llm_auto_buy_min_confidence:
+            min_confidence = self._auto_buy_min_confidence(signal.trade_style)
+            if signal.confidence < min_confidence:
                 logger.info(
                     "LLM auto buy skipped: confidence {:.2f} below threshold {:.2f}",
                     signal.confidence,
-                    self.llm_auto_buy_min_confidence,
+                    min_confidence,
                 )
                 return False
             if self.llm_auto_buy_requires_stop_loss and signal.stop_loss_pct is None:
@@ -569,6 +624,7 @@ class DanteTrader:
         quantity: int,
         stop_loss_price: int | None = None,
         stop_loss_pct: float | None = None,
+        trade_style: str = "manual",
     ) -> tuple[bool, str]:
         verb = "매수"
         try:
@@ -588,6 +644,7 @@ class DanteTrader:
                     quantity,
                     price,
                     stop_loss_price=resolved_stop_loss_price,
+                    trade_style=trade_style,
                 )
                 return (
                     True,
@@ -612,6 +669,7 @@ class DanteTrader:
                 quantity,
                 price,
                 stop_loss_price=resolved_stop_loss_price,
+                trade_style=trade_style,
             )
             return (
                 True,
@@ -695,8 +753,17 @@ class DanteTrader:
         quantity: int,
         price: int,
         stop_loss_price: int | None = None,
+        trade_style: str = "manual",
     ) -> dict | None:
-        trade = self._save_trade(company, code, quantity, price, "buy", stop_loss_price=stop_loss_price)
+        trade = self._save_trade(
+            company,
+            code,
+            quantity,
+            price,
+            "buy",
+            stop_loss_price=stop_loss_price,
+            trade_style=trade_style,
+        )
         if trade:
             self._record_trade_snapshot(trade, price, phase="entry")
         return trade
@@ -803,6 +870,7 @@ class DanteTrader:
             "pnl": pnl,
             "pnl_rate": pnl_rate,
             "trade_id": trade.get("trade_id") if trade else None,
+            "trade_style": trade.get("trade_style") if trade else "unknown",
             "entry_at": trade.get("entry_at") if trade else None,
             "closed_at": datetime.now().isoformat()
         })
@@ -867,6 +935,7 @@ class DanteTrader:
         price: int,
         action: str,
         stop_loss_price: int | None = None,
+        trade_style: str = "manual",
     ) -> dict | None:
         trades = self._load_trades()
         if action == "buy":
@@ -881,6 +950,9 @@ class DanteTrader:
                 existing_trade["company"] = company
                 existing_trade["quantity"] = new_quantity
                 existing_trade["entry_price"] = weighted_avg
+                existing_trade["trade_style"] = self._normalize_trade_style_value(
+                    existing_trade.get("trade_style") or trade_style
+                )
                 existing_trade["last_buy_price"] = price
                 existing_trade["last_buy_at"] = entry_at
                 existing_trade["last_tracked_at"] = entry_at
@@ -895,6 +967,7 @@ class DanteTrader:
                     "code": code,
                     "quantity": quantity,
                     "entry_price": price,
+                    "trade_style": self._normalize_trade_style_value(trade_style),
                     "stop_loss_price": stop_loss_price,
                     "stop_loss_pending": False,
                     "entry_at": entry_at,
@@ -1024,6 +1097,76 @@ class DanteTrader:
         except Exception:
             return []
 
+    def _record_investment_journal(
+        self,
+        signal: ReadingSignal,
+        *,
+        code: str | None,
+        decision: str,
+        reason: str,
+    ) -> None:
+        payload = {
+            "recorded_at": self._now_market_tz().isoformat(),
+            "source": signal.source,
+            "message_id": signal.message_id,
+            "posted_at": signal.posted_at.isoformat(),
+            "chat_id": signal.chat_id,
+            "chat_title": signal.chat_title,
+            "company": signal.company_name,
+            "code": code,
+            "action": signal.action,
+            "trade_style": self._normalize_trade_style_value(signal.trade_style),
+            "confidence": signal.confidence,
+            "stop_loss_pct": signal.stop_loss_pct,
+            "entry_hint": signal.entry_hint,
+            "decision": decision,
+            "reason": reason,
+            "summary": signal.summary,
+            "rationale_text": signal.rationale_text,
+        }
+        self._append_jsonl(self.investment_journal_path, payload)
+
+    def _load_investment_journal(self) -> list[dict]:
+        if not self.investment_journal_path.exists():
+            return []
+
+        records = []
+        with open(self.investment_journal_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        return records
+
+    @staticmethod
+    def _append_jsonl(path, payload: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+    def _resolve_signal_stop_loss_pct(self, signal: ReadingSignal) -> float | None:
+        if signal.stop_loss_pct is not None:
+            return signal.stop_loss_pct
+
+        trade_style = self._normalize_trade_style_value(signal.trade_style)
+        if trade_style == "daytrade":
+            return self.daytrade_stop_loss_pct
+        if trade_style == "swing":
+            return self.swing_stop_loss_pct
+        return self.default_stop_loss_pct
+
+    def _auto_buy_min_confidence(self, trade_style: str | None) -> float:
+        normalized = self._normalize_trade_style_value(trade_style)
+        if normalized == "daytrade":
+            return self.llm_daytrade_buy_min_confidence
+        if normalized == "swing":
+            return self.llm_swing_buy_min_confidence
+        return self.llm_auto_buy_min_confidence
+
     def _autonomous_buy_risk_allows(self, code: str, active_trades: dict | None = None) -> bool:
         active_trades = active_trades if active_trades is not None else self._load_trades()
         if self.llm_auto_max_active_positions > 0 and len(active_trades) >= self.llm_auto_max_active_positions:
@@ -1123,6 +1266,109 @@ class DanteTrader:
             f"• 종목별 매수 쿨다운: {self.llm_auto_symbol_cooldown_minutes}분\n\n"
         )
 
+    def _build_daily_review(self, review_date: date) -> str:
+        date_key = review_date.isoformat()
+        journal_records = [
+            record for record in self._load_investment_journal()
+            if self._iso_date(record.get("recorded_at")) == date_key
+        ]
+        closed_trades = [
+            trade for trade in self._load_history()
+            if self._iso_date(trade.get("closed_at")) == date_key
+        ]
+        active_trades = self._load_trades()
+
+        lines = [
+            f"🧠 **[Daily LLM Strategy Review]** {date_key}",
+            "",
+            "```text",
+            "전략    | 신호 | 자동시도 | 확인요청 | 종료거래 | 실현손익 | 승률 | 보유",
+            "--------+------+----------+----------+----------+----------+------+-----",
+        ]
+
+        for style in ["daytrade", "swing", "manual", "unknown"]:
+            style_journal = [
+                record for record in journal_records
+                if self._normalize_trade_style_value(record.get("trade_style")) == style
+            ]
+            style_trades = [
+                trade for trade in closed_trades
+                if self._normalize_trade_style_value(trade.get("trade_style")) == style
+            ]
+            style_active = [
+                trade for trade in active_trades.values()
+                if self._normalize_trade_style_value(trade.get("trade_style")) == style
+            ]
+            auto_attempts = sum(1 for record in style_journal if str(record.get("decision", "")).startswith("auto_"))
+            confirm_requests = sum(1 for record in style_journal if str(record.get("decision", "")).startswith("confirm_"))
+            realized_pnl = sum(int(trade.get("pnl", 0)) for trade in style_trades)
+            wins = sum(1 for trade in style_trades if int(trade.get("pnl", 0)) > 0)
+            win_rate = (wins / len(style_trades) * 100) if style_trades else 0.0
+            lines.append(
+                f"{self._style_label(style):<7} | "
+                f"{len(style_journal):>4} | "
+                f"{auto_attempts:>8} | "
+                f"{confirm_requests:>8} | "
+                f"{len(style_trades):>8} | "
+                f"{realized_pnl:>+8,} | "
+                f"{win_rate:>4.0f}% | "
+                f"{len(style_active):>3}"
+            )
+
+        lines.extend(["```", ""])
+        lines.append(self._build_daily_review_notes(journal_records, closed_trades, active_trades))
+        return "\n".join(lines)
+
+    def _build_daily_review_notes(
+        self,
+        journal_records: list[dict],
+        closed_trades: list[dict],
+        active_trades: dict,
+    ) -> str:
+        auto_records = [record for record in journal_records if str(record.get("decision", "")).startswith("auto_")]
+        skipped_records = [record for record in journal_records if record.get("decision") == "skipped"]
+        total_pnl = sum(int(trade.get("pnl", 0)) for trade in closed_trades)
+
+        return (
+            "복기 포인트\n"
+            f"• LLM 자동 시도: {len(auto_records)}건 / 스킵: {len(skipped_records)}건\n"
+            f"• 당일 종료 거래 실현손익: {total_pnl:+,}원\n"
+            f"• 장마감 보유 종목: {len(active_trades)}개\n"
+            "• 판단: 단타는 자동 집행 후 짧은 손익 반응, 스윙은 보유 논리 유지 여부를 다음 복기에서 비교합니다."
+        )
+
+    def _load_daily_reviews(self) -> dict:
+        if not self.daily_reviews_path.exists():
+            return {}
+        try:
+            with open(self.daily_reviews_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _save_daily_reviews(self, reviews: dict) -> None:
+        with open(self.daily_reviews_path, "w", encoding="utf-8") as f:
+            json.dump(reviews, f, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def _iso_date(raw_value) -> str | None:
+        if not raw_value:
+            return None
+        try:
+            return datetime.fromisoformat(str(raw_value)).date().isoformat()
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _style_label(style: str) -> str:
+        if style == "daytrade":
+            return "단타"
+        if style == "swing":
+            return "스윙"
+        if style == "manual":
+            return "수동"
+        return "미분류"
+
     def _mark_trade_stop_loss_pending(self, code: str, pending: bool, trigger_price: float | None = None):
         trades = self._load_trades()
         if code not in trades:
@@ -1157,6 +1403,7 @@ class DanteTrader:
                 "code": trade.get("code") or trade.get("pdno"),
                 "quantity": quantity,
                 "entry_price": entry_price,
+                "trade_style": self._normalize_trade_style_value(trade.get("trade_style")),
                 "current_price": current_price,
                 "profit_amount": profit_amount,
                 "profit_rate": profit_rate,
@@ -1262,6 +1509,30 @@ class DanteTrader:
             return int(float(str(value).replace(",", "").strip()))
         except (TypeError, ValueError):
             return 0
+
+    @staticmethod
+    def _parse_hhmm(raw_value: str) -> time:
+        try:
+            hour_raw, minute_raw = raw_value.strip().split(":", 1)
+            hour = int(hour_raw)
+            minute = int(minute_raw)
+        except (AttributeError, ValueError) as exc:
+            raise ValueError("time value must use HH:MM format") from exc
+
+        if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+            raise ValueError("time value must use a valid HH:MM time")
+        return time(hour, minute)
+
+    @staticmethod
+    def _normalize_trade_style_value(raw_value) -> str:
+        normalized = str(raw_value or "").strip().lower()
+        if normalized in {"daytrade", "short_term", "short-term", "단타"}:
+            return "daytrade"
+        if normalized in {"swing", "스윙"}:
+            return "swing"
+        if normalized == "manual":
+            return "manual"
+        return "unknown"
 
     def _update_trade_tracking_state(self, code: str, current_price: int, tracked_at: datetime):
         trades = self._load_trades()

@@ -32,6 +32,24 @@ WATCH_PHRASES = (
     "좋네요",
     "관심",
 )
+DAYTRADE_PHRASES = (
+    "단타",
+    "장중",
+    "당일",
+    "오늘",
+    "돌파",
+    "급등",
+    "거래량",
+)
+SWING_PHRASES = (
+    "스윙",
+    "눌림",
+    "며칠",
+    "추세",
+    "중기",
+    "보유",
+    "섹터",
+)
 
 
 def parse_reading_signal(message: ReadingMessage) -> ReadingSignal | None:
@@ -61,6 +79,7 @@ def parse_reading_signal(message: ReadingMessage) -> ReadingSignal | None:
         rationale_text=text,
         summary=text[:100].replace("\n", " "), # 룰 기반 요약 (첫 100자)
         raw_text=message.raw_text,
+        trade_style=_infer_trade_style(text),
         media_path=message.media_path,
     )
 
@@ -124,6 +143,16 @@ def _infer_confidence(
     return min(score, 0.95)
 
 
+def _infer_trade_style(text: str) -> str:
+    daytrade_hits = sum(1 for phrase in DAYTRADE_PHRASES if phrase in text)
+    swing_hits = sum(1 for phrase in SWING_PHRASES if phrase in text)
+    if daytrade_hits > swing_hits:
+        return "daytrade"
+    if swing_hits > daytrade_hits:
+        return "swing"
+    return "unknown"
+
+
 def parse_reading_signal_with_llm(message: ReadingMessage, model: str = "gemini") -> ReadingSignal | None:
     """LLM(Gemini/Codex)을 사용하여 메시지를 파싱합니다."""
     text = (message.text or "").strip()
@@ -138,7 +167,7 @@ def parse_reading_signal_with_llm(message: ReadingMessage, model: str = "gemini"
     prompt = f"""
     아래는 주식 리딩방의 텔레그램 메시지입니다. 
     1. 이 메시지의 핵심 내용을 1~2문장으로 요약하세요. (summary)
-    2. 종목명, 액션(buy_candidate, sell, watch, ignore), 손절가(%), 매수 힌트, 그리고 분석 근거를 추출하여 JSON 형식으로 응답하세요.
+    2. 종목명, 액션(buy_candidate, sell, watch, ignore), 매매 스타일(daytrade, swing, unknown), 손절가(%), 매수 힌트, 그리고 분석 근거를 추출하여 JSON 형식으로 응답하세요.
     3. 응답은 반드시 JSON만 출력하세요. 코드블록이나 설명 문장은 금지합니다.
     
     [응답 JSON 형식]
@@ -146,6 +175,7 @@ def parse_reading_signal_with_llm(message: ReadingMessage, model: str = "gemini"
         "summary": "메시지 핵심 요약",
         "company_name": "종목명",
         "action": "buy_candidate" | "sell" | "watch" | "ignore",
+        "trade_style": "daytrade" | "swing" | "unknown",
         "stop_loss_pct": "손절가 (예: 5.0)",
         "entry_hint": "breakout" | "pullback" | "current_price" | null,
         "confidence": 0.0 ~ 1.0,
@@ -200,6 +230,7 @@ def parse_reading_signal_with_llm(message: ReadingMessage, model: str = "gemini"
             rationale_text=data.get("rationale_text") or text[:200],
             summary=data.get("summary") or text[:100],
             raw_text=message.raw_text,
+            trade_style=_normalize_trade_style(data.get("trade_style")),
             media_path=message.media_path,
         )
     except Exception as e:
@@ -232,3 +263,12 @@ def _coerce_stop_loss_pct(raw_value) -> float | None:
         return float(normalized) / 100.0
     except (TypeError, ValueError):
         return None
+
+
+def _normalize_trade_style(raw_value) -> str:
+    normalized = str(raw_value or "").strip().lower()
+    if normalized in {"daytrade", "short_term", "short-term", "단타"}:
+        return "daytrade"
+    if normalized in {"swing", "스윙"}:
+        return "swing"
+    return "unknown"

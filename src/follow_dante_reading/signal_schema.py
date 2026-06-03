@@ -53,6 +53,7 @@ class ReadingSignal:
     rationale_text: str
     summary: str
     raw_text: str
+    trade_style: str = "unknown"
     media_path: str | None = None
 
     def to_dict(self) -> dict[str, Any]:

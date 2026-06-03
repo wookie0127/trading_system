@@ -242,6 +242,7 @@ class DanteReadingOrchestrator:
             tg.start_soon(self.trader.track_holdings_loop, tg)
             tg.start_soon(self.trader.track_trade_prices_loop)
             tg.start_soon(self.trader.track_scheduled_orders_loop)
+            tg.start_soon(self.trader.daily_review_loop)
             tg.start_soon(self._run_discord_command_loop)
 
             # 텔레그램 이벤트 핸들러 정의
@@ -354,6 +355,7 @@ class DanteReadingOrchestrator:
             f"📨 *Dante Reading Signal*\n"
             f"• 종목: {company}\n"
             f"• 액션: {signal.action}\n"
+            f"• 스타일: {signal.trade_style}\n"
             f"• 손절: {stop_loss}\n"
             f"• 신뢰도: {signal.confidence:.2f}\n"
             f"• 원문: {signal.rationale_text[:120]}"
