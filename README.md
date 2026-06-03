@@ -248,7 +248,8 @@ uv run python src/follow_dante_reading/orchestrator.py serve --chat <chat_alias_
 - 자동 매수 리스크 제한은 `DANTE_LLM_AUTO_MAX_BUYS_PER_DAY=3`, `DANTE_LLM_AUTO_MAX_ACTIVE_POSITIONS=5`, `DANTE_LLM_AUTO_SYMBOL_COOLDOWN_MINUTES=60`으로 조정합니다.
 - LLM은 매수 후보를 `daytrade`(단타), `swing`(스윙), `unknown`으로 분류하며, 단타/스윙은 각각 `DANTE_LLM_DAYTRADE_BUY_MIN_CONFIDENCE=0.85`, `DANTE_LLM_SWING_BUY_MIN_CONFIDENCE=0.90` 기준을 사용합니다.
 - 스타일별 기본 손절률은 `DANTE_DAYTRADE_STOP_LOSS_PCT=3%`, `DANTE_SWING_STOP_LOSS_PCT=7%`로 조정합니다.
-- 모든 LLM 판단은 `data/follow_dante_reading/investment_journal.jsonl`에 기록하고, 매일 `DANTE_DAILY_REVIEW_TIME=15:45` 이후 단타/스윙 성과 복기를 `daily_reviews.json`에 저장한 뒤 diary 채널로 보냅니다.
+- 모든 LLM 판단은 `data/follow_dante_reading/investment_journal.jsonl`에 기록하고, 매일 `DANTE_DAILY_REVIEW_TIME=15:45` 이후 단타/스윙 성과 복기를 Markdown으로 작성합니다.
+- 복기 Markdown 기본 저장 경로는 `DANTE_OBSIDIAN_DIARY_DIR="/Users/giwooklee/Documents/Obsidian Vault/TradingSystem/invest_diary"`이며, Docker에서는 `/app/obsidian/invest_diary`로 마운트해 같은 Obsidian vault에 기록합니다.
 
 Prefect 배포:
 

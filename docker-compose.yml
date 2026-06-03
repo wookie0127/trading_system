@@ -130,6 +130,7 @@ services:
       - PYTHONPATH=/app/src
       - PYTHONUNBUFFERED=1
       - GEMINI_CLI_TRUST_WORKSPACE=true
+      - DANTE_OBSIDIAN_DIARY_DIR=/app/obsidian/invest_diary
     env_file:
       - path: .env
         required: false
@@ -140,6 +141,7 @@ services:
       - ./config.yaml:/app/config.yaml:ro
       - ${HOME}/.ssh:/root/.ssh:ro
       - ${HOME}/.gemini:/root/.gemini
+      - "${HOME}/Documents/Obsidian Vault/TradingSystem:/app/obsidian"
     command: python src/follow_dante_reading/orchestrator.py serve --chat cafe_share --notify --use_llm
     working_dir: /app
 

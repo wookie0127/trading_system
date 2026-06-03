@@ -4,6 +4,7 @@ import json
 import math
 import os
 from datetime import date, datetime, time, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from loguru import logger
@@ -26,6 +27,12 @@ class DanteTrader:
         self.autonomous_state_path = project_root() / "data" / "follow_dante_reading" / "autonomous_strategy_state.json"
         self.investment_journal_path = project_root() / "data" / "follow_dante_reading" / "investment_journal.jsonl"
         self.daily_reviews_path = project_root() / "data" / "follow_dante_reading" / "daily_reviews.json"
+        self.obsidian_diary_dir = Path(
+            os.getenv(
+                "DANTE_OBSIDIAN_DIARY_DIR",
+                "/Users/giwooklee/Documents/Obsidian Vault/TradingSystem/invest_diary",
+            )
+        )
         self.active_trades_path.parent.mkdir(parents=True, exist_ok=True)
         self.is_mock = is_mock
         self.market_timezone = ZoneInfo(os.getenv("DANTE_MARKET_TIMEZONE", "Asia/Seoul"))
@@ -83,6 +90,7 @@ class DanteTrader:
             f"llm_auto_max_active_positions={self.llm_auto_max_active_positions}, "
             f"llm_auto_symbol_cooldown_minutes={self.llm_auto_symbol_cooldown_minutes}, "
             f"daily_review_time={self.daily_review_time.strftime('%H:%M')}, "
+            f"obsidian_diary_dir={self.obsidian_diary_dir}, "
             f"is_mock={self.is_mock}"
         )
 
@@ -325,9 +333,10 @@ class DanteTrader:
             return
 
         review = self._build_daily_review(now.date())
+        review_path = self._write_daily_review_markdown(now.date(), review)
         reviews[review_date] = {
             "created_at": now.isoformat(),
-            "review": review,
+            "markdown_path": str(review_path),
         }
         self._save_daily_reviews(reviews)
         await self.notifier.notify_diary(review)
@@ -1279,11 +1288,18 @@ class DanteTrader:
         active_trades = self._load_trades()
 
         lines = [
-            f"🧠 **[Daily LLM Strategy Review]** {date_key}",
+            "---",
+            "type: invest-diary",
+            f"date: {date_key}",
+            "system: dante-llm-autonomous",
+            "---",
             "",
-            "```text",
-            "전략    | 신호 | 자동시도 | 확인요청 | 종료거래 | 실현손익 | 승률 | 보유",
-            "--------+------+----------+----------+----------+----------+------+-----",
+            f"# 투자 복기 - {date_key}",
+            "",
+            "## 단타 vs 스윙 비교",
+            "",
+            "| 전략 | 신호 | 자동시도 | 확인요청 | 종료거래 | 실현손익 | 승률 | 보유 |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|",
         ]
 
         for style in ["daytrade", "swing", "manual", "unknown"]:
@@ -1305,18 +1321,36 @@ class DanteTrader:
             wins = sum(1 for trade in style_trades if int(trade.get("pnl", 0)) > 0)
             win_rate = (wins / len(style_trades) * 100) if style_trades else 0.0
             lines.append(
-                f"{self._style_label(style):<7} | "
-                f"{len(style_journal):>4} | "
-                f"{auto_attempts:>8} | "
-                f"{confirm_requests:>8} | "
-                f"{len(style_trades):>8} | "
-                f"{realized_pnl:>+8,} | "
-                f"{win_rate:>4.0f}% | "
-                f"{len(style_active):>3}"
+                f"| {self._style_label(style)} | "
+                f"{len(style_journal)} | "
+                f"{auto_attempts} | "
+                f"{confirm_requests} | "
+                f"{len(style_trades)} | "
+                f"{realized_pnl:+,} | "
+                f"{win_rate:.0f}% | "
+                f"{len(style_active)} |"
             )
 
-        lines.extend(["```", ""])
-        lines.append(self._build_daily_review_notes(journal_records, closed_trades, active_trades))
+        lines.extend(
+            [
+                "",
+                "## 복기 포인트",
+                "",
+                self._build_daily_review_notes(journal_records, closed_trades, active_trades),
+                "",
+                "## 판단 로그",
+                "",
+                self._build_journal_markdown_table(journal_records),
+                "",
+                "## 종료 거래",
+                "",
+                self._build_closed_trades_markdown_table(closed_trades),
+                "",
+                "## 장마감 보유",
+                "",
+                self._build_active_trades_markdown_table(active_trades),
+            ]
+        )
         return "\n".join(lines)
 
     def _build_daily_review_notes(
@@ -1330,12 +1364,83 @@ class DanteTrader:
         total_pnl = sum(int(trade.get("pnl", 0)) for trade in closed_trades)
 
         return (
-            "복기 포인트\n"
-            f"• LLM 자동 시도: {len(auto_records)}건 / 스킵: {len(skipped_records)}건\n"
-            f"• 당일 종료 거래 실현손익: {total_pnl:+,}원\n"
-            f"• 장마감 보유 종목: {len(active_trades)}개\n"
-            "• 판단: 단타는 자동 집행 후 짧은 손익 반응, 스윙은 보유 논리 유지 여부를 다음 복기에서 비교합니다."
+            f"- LLM 자동 시도: {len(auto_records)}건 / 스킵: {len(skipped_records)}건\n"
+            f"- 당일 종료 거래 실현손익: {total_pnl:+,}원\n"
+            f"- 장마감 보유 종목: {len(active_trades)}개\n"
+            "- 단타는 자동 집행 후 짧은 손익 반응을 중심으로 보고, 스윙은 보유 논리 유지 여부를 다음 복기에서 비교합니다."
         )
+
+    def _build_journal_markdown_table(self, journal_records: list[dict]) -> str:
+        if not journal_records:
+            return "_기록 없음_"
+
+        lines = [
+            "| 시간 | 전략 | 종목 | 액션 | 신뢰도 | 판단 | 사유 | 요약 |",
+            "|---|---|---|---|---:|---|---|---|",
+        ]
+        for record in journal_records[-30:]:
+            lines.append(
+                "| "
+                f"{self._hhmm(record.get('recorded_at'))} | "
+                f"{self._style_label(self._normalize_trade_style_value(record.get('trade_style')))} | "
+                f"{self._md_cell(record.get('company') or '-')} | "
+                f"{self._md_cell(record.get('action') or '-')} | "
+                f"{float(record.get('confidence') or 0):.2f} | "
+                f"{self._md_cell(record.get('decision') or '-')} | "
+                f"{self._md_cell(record.get('reason') or '-')} | "
+                f"{self._md_cell(record.get('summary') or '-')} |"
+            )
+        return "\n".join(lines)
+
+    def _build_closed_trades_markdown_table(self, closed_trades: list[dict]) -> str:
+        if not closed_trades:
+            return "_종료 거래 없음_"
+
+        lines = [
+            "| 시간 | 전략 | 종목 | 수량 | 매수가 | 매도가 | 실현손익 | 수익률 |",
+            "|---|---|---|---:|---:|---:|---:|---:|",
+        ]
+        for trade in closed_trades:
+            pnl_rate = float(trade.get("pnl_rate") or 0) * 100
+            lines.append(
+                "| "
+                f"{self._hhmm(trade.get('closed_at'))} | "
+                f"{self._style_label(self._normalize_trade_style_value(trade.get('trade_style')))} | "
+                f"{self._md_cell(trade.get('company') or '-')} | "
+                f"{int(trade.get('quantity') or 0)} | "
+                f"{int(trade.get('buy_price') or 0):,} | "
+                f"{int(trade.get('sell_price') or 0):,} | "
+                f"{int(trade.get('pnl') or 0):+,} | "
+                f"{pnl_rate:+.2f}% |"
+            )
+        return "\n".join(lines)
+
+    def _build_active_trades_markdown_table(self, active_trades: dict) -> str:
+        if not active_trades:
+            return "_보유 종목 없음_"
+
+        lines = [
+            "| 전략 | 종목 | 수량 | 평단가 | 손절가 | 진입시각 |",
+            "|---|---|---:|---:|---:|---|",
+        ]
+        for trade in active_trades.values():
+            lines.append(
+                "| "
+                f"{self._style_label(self._normalize_trade_style_value(trade.get('trade_style')))} | "
+                f"{self._md_cell(trade.get('company') or '-')} | "
+                f"{int(trade.get('quantity') or 0)} | "
+                f"{int(trade.get('entry_price') or 0):,} | "
+                f"{int(trade.get('stop_loss_price') or 0):,} | "
+                f"{self._hhmm(trade.get('entry_at'))} |"
+            )
+        return "\n".join(lines)
+
+    def _write_daily_review_markdown(self, review_date: date, review: str) -> Path:
+        self.obsidian_diary_dir.mkdir(parents=True, exist_ok=True)
+        path = self.obsidian_diary_dir / f"{review_date.isoformat()}.md"
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(review.rstrip() + "\n")
+        return path
 
     def _load_daily_reviews(self) -> dict:
         if not self.daily_reviews_path.exists():
@@ -1368,6 +1473,22 @@ class DanteTrader:
         if style == "manual":
             return "수동"
         return "미분류"
+
+    @staticmethod
+    def _hhmm(raw_value) -> str:
+        if not raw_value:
+            return "-"
+        try:
+            return datetime.fromisoformat(str(raw_value)).strftime("%H:%M")
+        except ValueError:
+            return "-"
+
+    @staticmethod
+    def _md_cell(raw_value) -> str:
+        text = str(raw_value).replace("\n", " ").replace("|", "\\|").strip()
+        if len(text) > 80:
+            return text[:77] + "..."
+        return text or "-"
 
     def _mark_trade_stop_loss_pending(self, code: str, pending: bool, trigger_price: float | None = None):
         trades = self._load_trades()
