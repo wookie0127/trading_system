@@ -447,8 +447,9 @@ class DanteReadingOrchestrator:
                     "• `!sell <종목명> <수량|전량|절반|30%> [목표가격]`: 즉시 또는 목표가 이상 예약 매도\n"
                     "• `!help` (도움말): 현재 보고 계신 명령어 가이드 표시\n\n"
                     "💡 **매매 승인 프로세스**\n"
-                    "텔레그램 신호 포착 시 승인 요청 메시지가 발송됩니다.\n"
-                    "해당 메시지에 `buy`, `sell`, `skip` 또는 `y`, `네` 등으로 답장하면 실제/모의 매매가 집행됩니다."
+                    "기본 전략에서는 텔레그램 신호 포착 시 승인 요청 메시지가 발송됩니다.\n"
+                    "해당 메시지에 `buy`, `sell`, `skip` 또는 `y`, `네` 등으로 답장하면 실제/모의 매매가 집행됩니다.\n"
+                    "`DANTE_SIGNAL_STRATEGY=llm_autonomous` 설정 시 신뢰도 기준을 통과한 LLM 판단은 승인 없이 집행됩니다."
                 )
                 await message.channel.send(help_text)
 

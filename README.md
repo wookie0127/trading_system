@@ -241,6 +241,10 @@ uv run python src/follow_dante_reading/orchestrator.py serve --chat <chat_alias_
 - 매도 신호에는 `sell` 또는 `skip`으로 응답합니다.
 - `DISCORD_TOKEN` / `DISCORD_CHANNEL_ID`가 없으면 확인 입력은 터미널에서 받습니다.
 - Discord 수동 매수는 `!buy 삼성전자 1 sl=3%` 또는 `!buy 삼성전자 1 65000 sl=62000`처럼 손절률/손절가를 지정할 수 있습니다.
+- 기본 전략은 `DANTE_SIGNAL_STRATEGY=confirm`이며 모든 매수/매도 신호에 승인을 요구합니다.
+- LLM 판단에 자동 집행을 맡기려면 `DANTE_SIGNAL_STRATEGY=llm_autonomous`와 `--use_llm`을 함께 사용합니다.
+- LLM 자동 집행 기준은 `DANTE_LLM_AUTO_BUY_MIN_CONFIDENCE=0.85`, `DANTE_LLM_AUTO_SELL_MIN_CONFIDENCE=0.75`로 조정할 수 있습니다.
+- 자동 매수는 기본적으로 메시지에서 손절률을 추출해야 실행합니다. 이 조건은 `DANTE_LLM_AUTO_BUY_REQUIRES_STOP_LOSS=false`로 끌 수 있습니다.
 
 Prefect 배포:
 

@@ -39,6 +39,12 @@ class DanteTrader:
         self.price_tracking_minutes = int(os.getenv("DANTE_PRICE_TRACKING_MINUTES", "15"))
         self.scheduled_orders_poll_seconds = int(os.getenv("DANTE_SCHEDULED_ORDERS_POLL_SECONDS", "5"))
         self.auto_stop_loss_enabled = os.getenv("DANTE_AUTO_STOP_LOSS_ENABLED", "true").lower() == "true"
+        self.signal_strategy = os.getenv("DANTE_SIGNAL_STRATEGY", "confirm").strip().lower()
+        self.llm_auto_buy_min_confidence = float(os.getenv("DANTE_LLM_AUTO_BUY_MIN_CONFIDENCE", "0.85"))
+        self.llm_auto_sell_min_confidence = float(os.getenv("DANTE_LLM_AUTO_SELL_MIN_CONFIDENCE", "0.75"))
+        self.llm_auto_buy_requires_stop_loss = (
+            os.getenv("DANTE_LLM_AUTO_BUY_REQUIRES_STOP_LOSS", "true").lower() == "true"
+        )
         if self.is_mock:
             logger.info("DanteTrader initialized in MOCK MODE (No real trades)")
         logger.info(
@@ -53,6 +59,10 @@ class DanteTrader:
             f"price_tracking_minutes={self.price_tracking_minutes}, "
             f"scheduled_orders_poll_seconds={self.scheduled_orders_poll_seconds}, "
             f"auto_stop_loss_enabled={self.auto_stop_loss_enabled}, "
+            f"signal_strategy={self.signal_strategy}, "
+            f"llm_auto_buy_min_confidence={self.llm_auto_buy_min_confidence}, "
+            f"llm_auto_sell_min_confidence={self.llm_auto_sell_min_confidence}, "
+            f"llm_auto_buy_requires_stop_loss={self.llm_auto_buy_requires_stop_loss}, "
             f"is_mock={self.is_mock}"
         )
 
@@ -81,9 +91,54 @@ class DanteTrader:
             if code in active_trades:
                 logger.info(f"{company}({code}) is already in active trades. Skipping duplicate buy.")
                 return
+            if self._should_auto_execute_signal(signal, expected_action="buy"):
+                await self._auto_buy(company, code, signal)
+                return
             await self._confirm_and_buy(company, code, signal)
         elif signal.action == "sell":
+            if self._should_auto_execute_signal(signal, expected_action="sell"):
+                await self._auto_sell(company, code, signal)
+                return
             await self._confirm_and_sell(company, code, signal)
+
+    async def _auto_buy(self, company: str, code: str, signal: ReadingSignal):
+        quantity = self.order_quantity
+        ok, result_message = await self.place_manual_buy(
+            company,
+            code,
+            quantity,
+            stop_loss_pct=signal.stop_loss_pct,
+        )
+        prefix = (
+            f"🤖 **[LLM Auto Buy]** {company}({code})\n"
+            f"• 신뢰도: {signal.confidence:.2f}\n"
+            f"• 판단 근거: {signal.rationale_text[:180]}\n"
+        )
+        await self.notifier.notify_all(prefix + result_message)
+        await self.notifier.notify_diary(prefix + result_message)
+        if not ok:
+            logger.warning("LLM auto buy failed: {}", result_message)
+
+    async def _auto_sell(self, company: str, code: str, signal: ReadingSignal):
+        active_trades = self._load_trades()
+        if code not in active_trades:
+            logger.info(f"LLM auto sell signal for {company}, but not in active trades.")
+            return
+
+        ok, result_message = await self.place_manual_sell(
+            company,
+            code,
+            quantity=active_trades[code]["quantity"],
+        )
+        prefix = (
+            f"🤖 **[LLM Auto Sell]** {company}({code})\n"
+            f"• 신뢰도: {signal.confidence:.2f}\n"
+            f"• 판단 근거: {signal.rationale_text[:180]}\n"
+        )
+        await self.notifier.notify_all(prefix + result_message)
+        await self.notifier.notify_diary(prefix + result_message)
+        if not ok:
+            logger.warning("LLM auto sell failed: {}", result_message)
 
     async def _confirm_and_buy(self, company: str, code: str, signal: ReadingSignal):
         """매수 컨펌 및 실행"""
@@ -221,6 +276,39 @@ class DanteTrader:
 
         if expected_action == "sell":
             return normalized in {"sell", "s", "y", "yes", "네", "ㅇㅇ", "ok", "매도", "정리"}
+
+        return False
+
+    def _should_auto_execute_signal(self, signal: ReadingSignal, expected_action: str) -> bool:
+        if self.signal_strategy not in {"llm_autonomous", "llm-auto", "auto"}:
+            return False
+
+        if expected_action == "buy":
+            if signal.action != "buy_candidate":
+                return False
+            if signal.confidence < self.llm_auto_buy_min_confidence:
+                logger.info(
+                    "LLM auto buy skipped: confidence {:.2f} below threshold {:.2f}",
+                    signal.confidence,
+                    self.llm_auto_buy_min_confidence,
+                )
+                return False
+            if self.llm_auto_buy_requires_stop_loss and signal.stop_loss_pct is None:
+                logger.info("LLM auto buy skipped: stop_loss_pct is required but missing")
+                return False
+            return True
+
+        if expected_action == "sell":
+            if signal.action != "sell":
+                return False
+            if signal.confidence < self.llm_auto_sell_min_confidence:
+                logger.info(
+                    "LLM auto sell skipped: confidence {:.2f} below threshold {:.2f}",
+                    signal.confidence,
+                    self.llm_auto_sell_min_confidence,
+                )
+                return False
+            return True
 
         return False
 
