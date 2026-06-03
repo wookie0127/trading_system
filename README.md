@@ -235,9 +235,12 @@ uv run python src/follow_dante_reading/orchestrator.py serve --chat <chat_alias_
 ```
 
 - `PAPER_*` 자격증명만 있으면 모의투자 계좌로 주문합니다.
+- 기본 손절은 `DANTE_DEFAULT_STOP_LOSS_PCT=3%`처럼 매매가 기준 비율로 조정할 수 있습니다.
+- 기본 손절가를 고정 가격으로 쓰려면 `DANTE_DEFAULT_STOP_LOSS_PRICE=65000`을 설정합니다.
 - 매수 후보 신호에는 `buy` 또는 `skip`으로 응답합니다.
 - 매도 신호에는 `sell` 또는 `skip`으로 응답합니다.
 - `DISCORD_TOKEN` / `DISCORD_CHANNEL_ID`가 없으면 확인 입력은 터미널에서 받습니다.
+- Discord 수동 매수는 `!buy 삼성전자 1 sl=3%` 또는 `!buy 삼성전자 1 65000 sl=62000`처럼 손절률/손절가를 지정할 수 있습니다.
 
 Prefect 배포:
 

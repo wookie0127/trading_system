@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import sys
 import csv
+from dataclasses import dataclass
 from datetime import datetime
 from tenacity import AsyncRetrying, wait_exponential, stop_never, retry_if_exception_type
 from telethon import events
@@ -22,6 +23,16 @@ from follow_dante_reading.config import CHAT_CONFIG_PATH, load_chat_aliases, res
 from follow_dante_reading.parser import parse_reading_signal, parse_reading_signal_with_llm
 from follow_dante_reading.store import ReadingStore
 from follow_dante_reading.trader import DanteTrader
+
+
+@dataclass
+class ManualTradeCommand:
+    stock_name: str
+    quantity: int | None = None
+    ratio: float | None = None
+    trigger_price: int | None = None
+    stop_loss_price: int | None = None
+    stop_loss_pct: float | None = None
 
 
 class DanteReadingOrchestrator:
@@ -230,6 +241,7 @@ class DanteReadingOrchestrator:
             # 수익률 트래킹 루프 및 Discord 커맨드 루프 시작
             tg.start_soon(self.trader.track_holdings_loop, tg)
             tg.start_soon(self.trader.track_trade_prices_loop)
+            tg.start_soon(self.trader.track_scheduled_orders_loop)
             tg.start_soon(self._run_discord_command_loop)
 
             # 텔레그램 이벤트 핸들러 정의
@@ -429,10 +441,10 @@ class DanteReadingOrchestrator:
             elif content in ["help", "!help", "도움말", "도움"]:
                 help_text = (
                     "🤖 **[Dante Bot 명령어 안내]**\n\n"
-                    "• `!status` (현황, 계좌): 현재 예수금, 보유 종목 수익률, 실현 손익 요약\n"
+                    "• `!status` (현황, 계좌): 현재 예수금, 보유 종목별 수량/평단가, 예약 주문, 실현 손익 요약\n"
                     "• `!balance` (잔고): 현재 계좌 잔고 및 보유 종목 조회\n"
-                    "• `!buy <종목명> <수량>`: KIS 모의투자/실계좌로 시장가 매수\n"
-                    "• `!sell <종목명> <수량>`: KIS 모의투자/실계좌로 시장가 매도\n"
+                    "• `!buy <종목명> <수량> [목표가격] [sl=손절가|손절률%]`: 즉시 또는 목표가 이하 예약 매수\n"
+                    "• `!sell <종목명> <수량|전량|절반|30%> [목표가격]`: 즉시 또는 목표가 이상 예약 매도\n"
                     "• `!help` (도움말): 현재 보고 계신 명령어 가이드 표시\n\n"
                     "💡 **매매 승인 프로세스**\n"
                     "텔레그램 신호 포착 시 승인 요청 메시지가 발송됩니다.\n"
@@ -452,62 +464,228 @@ class DanteReadingOrchestrator:
 
     async def _handle_manual_trade_command(self, message, raw_content: str, side: str) -> None:
         try:
-            stock_name, quantity = self._parse_trade_command(raw_content)
+            command = self._parse_trade_command(raw_content, side=side)
         except ValueError as exc:
             await message.channel.send(str(exc))
             return
 
         market_handler = self.trader.market_handler
-        code = market_handler.get_code(stock_name)
+        code = market_handler.get_code(command.stock_name)
         if not code:
-            await message.channel.send(f"❌ '{stock_name}'에 해당하는 종목 코드를 찾을 수 없습니다.")
+            await message.channel.send(f"❌ '{command.stock_name}'에 해당하는 종목 코드를 찾을 수 없습니다.")
             return
 
-        verb = "매수" if side == "buy" else "매도"
+        if command.trigger_price is not None:
+            order = self.trader.schedule_manual_order(
+                company=command.stock_name,
+                code=code,
+                side=side,
+                quantity=command.quantity,
+                ratio=command.ratio,
+                trigger_price=command.trigger_price,
+                stop_loss_price=command.stop_loss_price,
+                stop_loss_pct=command.stop_loss_pct,
+            )
+            target = (
+                f"{command.quantity}주"
+                if command.quantity is not None
+                else f"{int((command.ratio or 0) * 100)}%"
+            )
+            stop_loss = self._format_stop_loss_command(command)
+            await message.channel.send(
+                f"🗓️ 예약 주문 등록 완료: {command.stock_name}({code}) {target} "
+                f"{'매수' if side == 'buy' else '매도'} / 목표가 {order['trigger_price']:,}원"
+                f"{stop_loss}"
+            )
+            return
+
         try:
             if side == "buy":
-                res = market_handler.create_market_buy_order(code, quantity)
+                ok, result_message = await self.trader.place_manual_buy(
+                    command.stock_name,
+                    code,
+                    command.quantity or 0,
+                    stop_loss_price=command.stop_loss_price,
+                    stop_loss_pct=command.stop_loss_pct,
+                )
             else:
-                res = market_handler.create_market_sell_order(code, quantity)
-        except Exception as exc:
-            logger.error(f"Manual {side} command failed: {exc}")
-            await message.channel.send(f"❌ {verb} 주문 중 오류가 발생했습니다: {exc}")
+                ok, result_message = await self.trader.place_manual_sell(
+                    command.stock_name,
+                    code,
+                    quantity=command.quantity,
+                    ratio=command.ratio,
+                )
+        except ValueError as exc:
+            await message.channel.send(f"❌ {exc}")
             return
 
-        if res.get("rt_cd") == "0":
-            price = self.trader._extract_price(res, fallback_code=code)
-            if side == "buy":
-                self.trader.record_executed_buy(stock_name, code, quantity, price)
-            else:
-                self.trader.record_executed_sell(stock_name, code, quantity, price)
-            await message.channel.send(
-                f"✅ {verb} 주문 성공: {stock_name}({code}) {quantity}주"
-            )
+        if ok:
+            await message.channel.send(result_message)
         else:
-            error_msg = res.get("msg1") or res.get("msg_cd") or "알 수 없는 오류"
-            await message.channel.send(
-                f"❌ {verb} 주문 실패: {stock_name}({code}) {quantity}주, {error_msg}"
-            )
+            await message.channel.send(result_message)
 
     @staticmethod
-    def _parse_trade_command(raw_content: str) -> tuple[str, int]:
+    def _parse_trade_command(raw_content: str, side: str) -> ManualTradeCommand:
         parts = raw_content.strip().split()
         if len(parts) < 3:
             raise ValueError("❌ 형식이 올바르지 않습니다. 예: `!buy 삼성전자 1`")
 
-        quantity_raw = parts[-1]
-        if not quantity_raw.isdigit():
-            raise ValueError("❌ 수량은 양의 정수여야 합니다. 예: `!sell 삼성전자 2`")
+        parts, stop_loss_price, stop_loss_pct = DanteReadingOrchestrator._extract_stop_loss_options(parts)
+        if len(parts) < 3:
+            raise ValueError("❌ 형식이 올바르지 않습니다. 예: `!buy 삼성전자 1 sl=3%`")
+        if side != "buy" and (stop_loss_price is not None or stop_loss_pct is not None):
+            raise ValueError("❌ 손절 설정은 매수 명령에서만 사용할 수 있습니다.")
 
-        quantity = int(quantity_raw)
-        if quantity <= 0:
-            raise ValueError("❌ 수량은 1 이상이어야 합니다.")
+        trigger_price = None
+        if len(parts) >= 4 and DanteReadingOrchestrator._looks_like_price(parts[-1]):
+            trigger_price = DanteReadingOrchestrator._parse_trigger_price(parts[-1])
+            parts = parts[:-1]
 
+        target_raw = parts[-1]
         stock_name = " ".join(parts[1:-1]).strip()
         if not stock_name:
             raise ValueError("❌ 종목명이 비어 있습니다. 예: `!buy 한미반도체 1`")
 
-        return stock_name, quantity
+        if side == "buy":
+            if not target_raw.isdigit():
+                raise ValueError("❌ 매수 수량은 양의 정수여야 합니다. 예: `!buy 삼성전자 2`")
+            quantity = int(target_raw)
+            if quantity <= 0:
+                raise ValueError("❌ 매수 수량은 1 이상이어야 합니다.")
+            return ManualTradeCommand(
+                stock_name=stock_name,
+                quantity=quantity,
+                trigger_price=trigger_price,
+                stop_loss_price=stop_loss_price,
+                stop_loss_pct=stop_loss_pct,
+            )
+
+        quantity, ratio = DanteReadingOrchestrator._parse_sell_target(target_raw)
+        return ManualTradeCommand(
+            stock_name=stock_name,
+            quantity=quantity,
+            ratio=ratio,
+            trigger_price=trigger_price,
+        )
+
+    @staticmethod
+    def _parse_sell_target(target_raw: str) -> tuple[int | None, float | None]:
+        normalized = target_raw.strip().lower()
+        normalized = normalized.replace("％", "%")
+        alias_map = {
+            "all": (None, 1.0),
+            "전량": (None, 1.0),
+            "전체": (None, 1.0),
+            "half": (None, 0.5),
+            "절반": (None, 0.5),
+            "반": (None, 0.5),
+        }
+        if normalized in alias_map:
+            return alias_map[normalized]
+
+        if normalized.endswith("%"):
+            pct_raw = normalized[:-1]
+            try:
+                pct = float(pct_raw)
+            except ValueError as exc:
+                raise ValueError("❌ 매도 비율 형식이 올바르지 않습니다. 예: `!sell 삼성전자 30%`") from exc
+            if pct <= 0 or pct > 100:
+                raise ValueError("❌ 매도 비율은 0 초과 100 이하만 가능합니다.")
+            return None, pct / 100
+
+        if normalized.isdigit():
+            quantity = int(normalized)
+            if quantity <= 0:
+                raise ValueError("❌ 매도 수량은 1 이상이어야 합니다.")
+            return quantity, None
+
+        raise ValueError("❌ 매도는 수량 또는 `전량`, `절반`, `30%` 형식으로 입력하세요.")
+
+    @staticmethod
+    def _looks_like_price(value: str) -> bool:
+        normalized = value.replace(",", "").strip()
+        return normalized.isdigit()
+
+    @staticmethod
+    def _extract_stop_loss_options(parts: list[str]) -> tuple[list[str], int | None, float | None]:
+        prefixes = {
+            "sl",
+            "stop",
+            "stop_loss",
+            "손절",
+            "손절가",
+            "손절률",
+        }
+        remaining = []
+        stop_loss_price = None
+        stop_loss_pct = None
+
+        for token in parts:
+            if "=" not in token:
+                remaining.append(token)
+                continue
+
+            raw_key, raw_value = token.split("=", 1)
+            key = raw_key.strip().lower()
+            value = raw_value.strip()
+            if key not in prefixes:
+                remaining.append(token)
+                continue
+
+            parsed_price, parsed_pct = DanteReadingOrchestrator._parse_stop_loss_value(key, value)
+            if parsed_price is not None:
+                stop_loss_price = parsed_price
+                stop_loss_pct = None
+            if parsed_pct is not None:
+                stop_loss_pct = parsed_pct
+                stop_loss_price = None
+
+        return remaining, stop_loss_price, stop_loss_pct
+
+    @staticmethod
+    def _parse_stop_loss_value(key: str, value: str) -> tuple[int | None, float | None]:
+        normalized = value.replace(",", "").replace("％", "%").strip()
+        if not normalized:
+            raise ValueError("❌ 손절값이 비어 있습니다. 예: `sl=3%` 또는 `sl=65000`")
+
+        pct_keys = {"손절률"}
+        if normalized.endswith("%") or key in pct_keys:
+            pct_raw = normalized[:-1] if normalized.endswith("%") else normalized
+            try:
+                pct = float(pct_raw)
+            except ValueError as exc:
+                raise ValueError("❌ 손절률 형식이 올바르지 않습니다. 예: `sl=3%`") from exc
+            if pct <= 0 or pct >= 100:
+                raise ValueError("❌ 손절률은 0 초과 100 미만이어야 합니다. 예: `sl=3%`")
+            return None, pct / 100
+
+        if not normalized.isdigit():
+            raise ValueError("❌ 손절가는 숫자여야 합니다. 예: `sl=65000`")
+
+        price = int(normalized)
+        if key in {"sl", "stop", "stop_loss", "손절"} and price < 100:
+            return None, price / 100
+        if price <= 0:
+            raise ValueError("❌ 손절가는 1원 이상이어야 합니다.")
+        return price, None
+
+    @staticmethod
+    def _format_stop_loss_command(command: ManualTradeCommand) -> str:
+        if command.stop_loss_price is not None:
+            return f" / 손절가 {command.stop_loss_price:,}원"
+        if command.stop_loss_pct is not None:
+            return f" / 손절률 {command.stop_loss_pct * 100:.1f}%"
+        return ""
+
+    @staticmethod
+    def _parse_trigger_price(value: str) -> int:
+        normalized = value.replace(",", "").strip()
+        if not normalized.isdigit():
+            raise ValueError("❌ 목표 가격은 숫자여야 합니다. 예: `!buy 삼성전자 1 65000`")
+        trigger_price = int(normalized)
+        if trigger_price <= 0:
+            raise ValueError("❌ 목표 가격은 1원 이상이어야 합니다.")
+        return trigger_price
 
 
 def main(

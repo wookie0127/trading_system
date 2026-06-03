@@ -1,6 +1,7 @@
 import anyio
 import anyio.abc
 import json
+import math
 import os
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
@@ -21,27 +22,36 @@ class DanteTrader:
         self.active_trades_path = project_root() / "data" / "follow_dante_reading" / "active_trades.json"
         self.trade_history_path = project_root() / "data" / "follow_dante_reading" / "trade_history.json"
         self.trade_tracking_path = project_root() / "data" / "follow_dante_reading" / "trade_price_tracking.json"
+        self.scheduled_orders_path = project_root() / "data" / "follow_dante_reading" / "scheduled_orders.json"
         self.active_trades_path.parent.mkdir(parents=True, exist_ok=True)
         self.is_mock = is_mock
         self.market_timezone = ZoneInfo(os.getenv("DANTE_MARKET_TIMEZONE", "Asia/Seoul"))
         self.market_open_time = time(9, 0)
         self.market_close_time = time(15, 30)
-        self.default_stop_loss_pct = float(os.getenv("DANTE_DEFAULT_STOP_LOSS_PCT", "0.05"))
+        self.default_stop_loss_pct = self._parse_stop_loss_pct(
+            os.getenv("DANTE_DEFAULT_STOP_LOSS_PCT", "5%")
+        )
+        self.default_stop_loss_price = self._parse_stop_loss_price(
+            os.getenv("DANTE_DEFAULT_STOP_LOSS_PRICE")
+        )
         self.order_quantity = int(os.getenv("DANTE_ORDER_QUANTITY", "1"))
         self.holdings_poll_seconds = int(os.getenv("DANTE_HOLDINGS_POLL_SECONDS", "300"))
         self.price_tracking_minutes = int(os.getenv("DANTE_PRICE_TRACKING_MINUTES", "15"))
+        self.scheduled_orders_poll_seconds = int(os.getenv("DANTE_SCHEDULED_ORDERS_POLL_SECONDS", "5"))
         self.auto_stop_loss_enabled = os.getenv("DANTE_AUTO_STOP_LOSS_ENABLED", "true").lower() == "true"
         if self.is_mock:
             logger.info("DanteTrader initialized in MOCK MODE (No real trades)")
         logger.info(
             "DanteTrader config: "
             f"order_quantity={self.order_quantity}, "
-            f"default_stop_loss_pct={self.default_stop_loss_pct:.4f}, "
+            f"default_stop_loss_pct={self.default_stop_loss_pct}, "
+            f"default_stop_loss_price={self.default_stop_loss_price}, "
             f"market_timezone={self.market_timezone.key}, "
             f"market_open_time={self.market_open_time.strftime('%H:%M')}, "
             f"market_close_time={self.market_close_time.strftime('%H:%M')}, "
             f"holdings_poll_seconds={self.holdings_poll_seconds}, "
             f"price_tracking_minutes={self.price_tracking_minutes}, "
+            f"scheduled_orders_poll_seconds={self.scheduled_orders_poll_seconds}, "
             f"auto_stop_loss_enabled={self.auto_stop_loss_enabled}, "
             f"is_mock={self.is_mock}"
         )
@@ -92,38 +102,46 @@ class DanteTrader:
             quantity = self.order_quantity
             price = 0
 
-            # 손절가 결정
-            sl_pct = signal.stop_loss_pct if signal.stop_loss_pct is not None else self.default_stop_loss_pct
-            sl_label = f"{sl_pct*100:.1f}%"
-
             if self.is_mock:
                 # 모의 투자: 현재가 조회 후 성공 처리
                 price_info = self.market_handler.fetch_price(code)
                 price = int(price_info.get("output", {}).get("stck_prpr", 0))
-                sl_price = int(price * (1 - sl_pct))
+                sl_price, sl_label = self._resolve_stop_loss(
+                    entry_price=price,
+                    stop_loss_pct=signal.stop_loss_pct,
+                )
 
                 success_msg = (
                     f"🍦 **[Mock Buy]** {company} {quantity}주 매수 완료\n"
                     f"• 체결가: {price:,}원\n"
-                    f"• 손절라인: {sl_price:,}원 (신호가 기준 {sl_label} 하락 시 자동 매도 예정)"
+                    f"• 손절라인: {self._format_stop_loss_price(sl_price)} ({sl_label})"
                 )
                 await self.notifier.notify_all(success_msg)
-                await self.notifier.notify_diary(f"✅ [Mock Buy Success] {company} @ {price:,}원 (SL: {sl_price:,}원)")
+                await self.notifier.notify_diary(
+                    f"✅ [Mock Buy Success] {company} @ {price:,}원 "
+                    f"(SL: {self._format_stop_loss_price(sl_price)})"
+                )
                 self.record_executed_buy(company, code, quantity, price, sl_price)
             else:
                 # 실제 투자
                 res = self.market_handler.create_market_buy_order(code, quantity)
                 if res.get("rt_cd") == "0":
                     price = self._extract_price(res, fallback_code=code)
-                    sl_price = int(price * (1 - sl_pct))
+                    sl_price, sl_label = self._resolve_stop_loss(
+                        entry_price=price,
+                        stop_loss_pct=signal.stop_loss_pct,
+                    )
 
                     success_msg = (
                         f"✅ **[Buy Success]** {company} {quantity}주 매수 완료\n"
                         f"• 평균가: {price:,}원\n"
-                        f"• 손절 예약: {sl_price:,}원 ({sl_label}) 설정 완료"
+                        f"• 손절 예약: {self._format_stop_loss_price(sl_price)} ({sl_label}) 설정 완료"
                     )
                     await self.notifier.notify_all(success_msg)
-                    await self.notifier.notify_diary(f"✅ [Buy Success] {company} @ {price:,}원 (SL: {sl_price:,}원)")
+                    await self.notifier.notify_diary(
+                        f"✅ [Buy Success] {company} @ {price:,}원 "
+                        f"(SL: {self._format_stop_loss_price(sl_price)})"
+                    )
 
                     # 실제 예약 매도 주문 로직 (KIS API에 따라 구현 필요, 여기서는 기록 후 감시)
                     self.record_executed_buy(company, code, quantity, price, sl_price)
@@ -176,6 +194,19 @@ class DanteTrader:
         else:
             await self.notifier.notify_all(f"🚫 {company} 매도를 거절하셨습니다.")
 
+    async def track_scheduled_orders_loop(self):
+        logger.info(
+            "Starting scheduled order loop (Interval: {} seconds)",
+            self.scheduled_orders_poll_seconds,
+        )
+        while True:
+            try:
+                await self.process_scheduled_orders()
+            except Exception as e:
+                logger.error(f"Error in scheduled order loop: {e}")
+
+            await anyio.sleep(self.scheduled_orders_poll_seconds)
+
     @staticmethod
     def _is_trade_confirmed(answer: str, expected_action: str) -> bool:
         normalized = answer.strip().lower()
@@ -220,7 +251,7 @@ class DanteTrader:
             await anyio.sleep(interval_seconds)
 
     async def track_trade_prices(self):
-        active_trades = self._load_trades()
+        active_trades = self._reconcile_active_trades_with_balance()
         if not active_trades:
             return
 
@@ -282,6 +313,7 @@ class DanteTrader:
         ):
             with attempt:
                 active_trades = self._load_trades()
+                active_trades = self._reconcile_active_trades_with_balance(active_trades)
                 if not active_trades:
                     return
 
@@ -307,9 +339,9 @@ class DanteTrader:
                     has_updates = True
 
                     stop_loss_pending = bool(data.get("stop_loss_pending"))
-                    threshold_price = stop_loss_price or int(entry_price * (1 - self.default_stop_loss_pct))
+                    threshold_price = stop_loss_price or self._resolve_stop_loss(entry_price=entry_price)[0]
 
-                    if self.auto_stop_loss_enabled and threshold_price > 0 and current_price <= threshold_price:
+                    if self.auto_stop_loss_enabled and threshold_price and current_price <= threshold_price:
                         if stop_loss_pending:
                             continue
 
@@ -341,7 +373,7 @@ class DanteTrader:
         report = f"💰 **[Account Status]**\n• **예수금**: {cash:,}원\n\n"
 
         # 2. 보유 종목 현황
-        active_trades = self._load_trades()
+        active_trades = self._reconcile_active_trades_with_balance()
         if active_trades:
             report += "📂 **현재 보유 종목**\n"
             total_eval = 0
@@ -366,12 +398,37 @@ class DanteTrader:
                     ]
                 )
             report += self._format_text_table(
-                headers=["종목", "수량", "매입가", "현재가", "수익률", "평가손익", "손절가"],
+                headers=["종목", "보유수량", "평단가", "현재가", "수익률", "평가손익", "손절가"],
                 rows=rows,
             )
             report += f"\n• 보유종목 총 평가액: {total_eval:,}원\n\n"
         else:
             report += "📂 **현재 보유 종목**: 없음\n\n"
+
+        scheduled_orders = self._load_scheduled_orders()
+        if scheduled_orders:
+            report += "🗓️ **예약 주문**\n"
+            scheduled_rows = []
+            for order in scheduled_orders:
+                target = (
+                    f"{order['quantity']}주"
+                    if order.get("quantity") is not None
+                    else f"{int(order.get('ratio', 0) * 100)}%"
+                )
+                scheduled_rows.append(
+                    [
+                        "매수" if order["side"] == "buy" else "매도",
+                        order["company"],
+                        target,
+                        f"{order['trigger_price']:,}원",
+                        self._format_scheduled_stop_loss(order),
+                    ]
+                )
+            report += self._format_text_table(
+                headers=["구분", "종목", "주문", "목표가", "손절"],
+                rows=scheduled_rows,
+            )
+            report += "\n"
 
         # 3. 실현 손익 (매매 이력 기반)
         history = self._load_history()
@@ -388,6 +445,132 @@ class DanteTrader:
             report += "🏁 **최근 실현 손익**: 이력 없음"
 
         return report
+
+    async def place_manual_buy(
+        self,
+        company: str,
+        code: str,
+        quantity: int,
+        stop_loss_price: int | None = None,
+        stop_loss_pct: float | None = None,
+    ) -> tuple[bool, str]:
+        verb = "매수"
+        try:
+            if self.is_mock:
+                price_info = self.market_handler.fetch_price(code)
+                price = int(price_info.get("output", {}).get("stck_prpr", 0))
+                if price <= 0:
+                    return False, f"❌ {verb} 주문 실패: 현재가를 조회하지 못했습니다."
+                resolved_stop_loss_price, stop_loss_label = self._resolve_stop_loss(
+                    entry_price=price,
+                    stop_loss_price=stop_loss_price,
+                    stop_loss_pct=stop_loss_pct,
+                )
+                self.record_executed_buy(
+                    company,
+                    code,
+                    quantity,
+                    price,
+                    stop_loss_price=resolved_stop_loss_price,
+                )
+                return (
+                    True,
+                    f"✅ {verb} 주문 성공: {company}({code}) {quantity}주, 체결가 {price:,}원, "
+                    f"손절 {self._format_stop_loss_price(resolved_stop_loss_price)} ({stop_loss_label})",
+                )
+
+            res = self.market_handler.create_market_buy_order(code, quantity)
+            if res.get("rt_cd") != "0":
+                error_msg = res.get("msg1") or res.get("msg_cd") or "알 수 없는 오류"
+                return False, f"❌ {verb} 주문 실패: {company}({code}) {quantity}주, {error_msg}"
+
+            price = self._extract_price(res, fallback_code=code)
+            resolved_stop_loss_price, stop_loss_label = self._resolve_stop_loss(
+                entry_price=price,
+                stop_loss_price=stop_loss_price,
+                stop_loss_pct=stop_loss_pct,
+            )
+            self.record_executed_buy(
+                company,
+                code,
+                quantity,
+                price,
+                stop_loss_price=resolved_stop_loss_price,
+            )
+            return (
+                True,
+                f"✅ {verb} 주문 성공: {company}({code}) {quantity}주, 체결가 {price:,}원, "
+                f"손절 {self._format_stop_loss_price(resolved_stop_loss_price)} ({stop_loss_label})",
+            )
+        except Exception as exc:
+            logger.error(f"Manual buy command failed: {exc}")
+            return False, f"❌ {verb} 주문 중 오류가 발생했습니다: {exc}"
+
+    async def place_manual_sell(
+        self,
+        company: str,
+        code: str,
+        quantity: int | None = None,
+        ratio: float | None = None,
+    ) -> tuple[bool, str]:
+        trade = self._load_trades().get(code)
+        if not trade:
+            return False, f"❌ {company}({code}) 보유 내역이 없습니다."
+
+        try:
+            sell_quantity = self._resolve_sell_quantity(trade["quantity"], quantity=quantity, ratio=ratio)
+            verb_detail = f"{sell_quantity}주"
+            if ratio is not None:
+                verb_detail = f"{int(ratio * 100)}% ({sell_quantity}주)"
+
+            if self.is_mock:
+                price_info = self.market_handler.fetch_price(code)
+                price = int(price_info.get("output", {}).get("stck_prpr", 0))
+                if price <= 0:
+                    return False, "❌ 매도 주문 실패: 현재가를 조회하지 못했습니다."
+                self.record_executed_sell(company, code, sell_quantity, price, active_trade=trade)
+                return True, f"✅ 매도 주문 성공: {company}({code}) {verb_detail}, 체결가 {price:,}원"
+
+            res = self.market_handler.create_market_sell_order(code, sell_quantity)
+            if res.get("rt_cd") != "0":
+                error_msg = res.get("msg1") or res.get("msg_cd") or "알 수 없는 오류"
+                return False, f"❌ 매도 주문 실패: {company}({code}) {verb_detail}, {error_msg}"
+
+            price = self._extract_price(res, fallback_code=code)
+            self.record_executed_sell(company, code, sell_quantity, price, active_trade=trade)
+            return True, f"✅ 매도 주문 성공: {company}({code}) {verb_detail}, 체결가 {price:,}원"
+        except Exception as exc:
+            logger.error(f"Manual sell command failed: {exc}")
+            return False, f"❌ 매도 주문 중 오류가 발생했습니다: {exc}"
+
+    def schedule_manual_order(
+        self,
+        *,
+        company: str,
+        code: str,
+        side: str,
+        quantity: int | None = None,
+        ratio: float | None = None,
+        trigger_price: int,
+        stop_loss_price: int | None = None,
+        stop_loss_pct: float | None = None,
+    ) -> dict:
+        orders = self._load_scheduled_orders()
+        order = {
+            "order_id": self._make_scheduled_order_id(code, side, trigger_price),
+            "company": company,
+            "code": code,
+            "side": side,
+            "quantity": quantity,
+            "ratio": ratio,
+            "trigger_price": trigger_price,
+            "stop_loss_price": stop_loss_price,
+            "stop_loss_pct": stop_loss_pct,
+            "created_at": datetime.now(self.market_timezone).isoformat(),
+        }
+        orders.append(order)
+        self._save_scheduled_orders(orders)
+        return order
 
     def record_executed_buy(
         self,
@@ -418,6 +601,55 @@ class DanteTrader:
             pnl_rate = (price - entry_price) / entry_price
             self._save_history(company, code, quantity, entry_price, price, pnl, pnl_rate, trade=trade)
         self._save_trade(company, code, quantity, price, "sell")
+
+    async def process_scheduled_orders(self) -> None:
+        scheduled_orders = self._load_scheduled_orders()
+        if not scheduled_orders:
+            return
+
+        now = self._now_market_tz()
+        remaining_orders = []
+
+        for order in scheduled_orders:
+            if not self._is_regular_market_open(now):
+                remaining_orders.append(order)
+                continue
+
+            price_info = self.market_handler.fetch_price(order["code"])
+            current_price = int(float(price_info.get("output", {}).get("stck_prpr", 0)))
+            if current_price <= 0:
+                remaining_orders.append(order)
+                continue
+
+            trigger_price = int(order["trigger_price"])
+            if not self._should_execute_scheduled_order(order["side"], current_price, trigger_price):
+                remaining_orders.append(order)
+                continue
+
+            if order["side"] == "buy":
+                ok, result_message = await self.place_manual_buy(
+                    order["company"],
+                    order["code"],
+                    int(order["quantity"]),
+                    stop_loss_price=order.get("stop_loss_price"),
+                    stop_loss_pct=order.get("stop_loss_pct"),
+                )
+            else:
+                ok, result_message = await self.place_manual_sell(
+                    order["company"],
+                    order["code"],
+                    quantity=order.get("quantity"),
+                    ratio=order.get("ratio"),
+                )
+
+            prefix = (
+                f"🗓️ **[예약 주문 실행]** 현재가 {current_price:,}원 / 목표가 {trigger_price:,}원\n"
+            )
+            await self.notifier.notify_all(prefix + result_message)
+            if not ok and not self._is_non_retryable_order_failure(result_message):
+                remaining_orders.append(order)
+
+        self._save_scheduled_orders(remaining_orders)
 
     @staticmethod
     def _format_text_table(headers: list[str], rows: list[list[str]]) -> str:
@@ -523,22 +755,49 @@ class DanteTrader:
         trades = self._load_trades()
         if action == "buy":
             entry_at = datetime.now().isoformat()
-            trades[code] = {
-                "trade_id": self._make_trade_id(code, entry_at),
-                "company": company,
-                "code": code,
-                "quantity": quantity,
-                "entry_price": price,
-                "stop_loss_price": stop_loss_price,
-                "stop_loss_pending": False,
-                "entry_at": entry_at,
-                "last_tracked_at": entry_at,
-                "last_tracked_price": price,
-                "tracking_interval_minutes": self.price_tracking_minutes,
-            }
+            existing_trade = trades.get(code)
+            if existing_trade:
+                existing_quantity = int(existing_trade["quantity"])
+                new_quantity = existing_quantity + quantity
+                weighted_avg = round(
+                    ((existing_trade["entry_price"] * existing_quantity) + (price * quantity)) / new_quantity
+                )
+                existing_trade["company"] = company
+                existing_trade["quantity"] = new_quantity
+                existing_trade["entry_price"] = weighted_avg
+                existing_trade["last_buy_price"] = price
+                existing_trade["last_buy_at"] = entry_at
+                existing_trade["last_tracked_at"] = entry_at
+                existing_trade["last_tracked_price"] = price
+                if stop_loss_price is not None:
+                    existing_trade["stop_loss_price"] = stop_loss_price
+                trades[code] = existing_trade
+            else:
+                trades[code] = {
+                    "trade_id": self._make_trade_id(code, entry_at),
+                    "company": company,
+                    "code": code,
+                    "quantity": quantity,
+                    "entry_price": price,
+                    "stop_loss_price": stop_loss_price,
+                    "stop_loss_pending": False,
+                    "entry_at": entry_at,
+                    "last_tracked_at": entry_at,
+                    "last_tracked_price": price,
+                    "tracking_interval_minutes": self.price_tracking_minutes,
+                }
         elif action == "sell":
-            if code in trades:
-                del trades[code]
+            trade = trades.get(code)
+            if trade:
+                remaining_quantity = int(trade["quantity"]) - quantity
+                if remaining_quantity > 0:
+                    trade["quantity"] = remaining_quantity
+                    trade["last_sell_price"] = price
+                    trade["last_sell_at"] = datetime.now().isoformat()
+                    trade["stop_loss_pending"] = False
+                    trades[code] = trade
+                else:
+                    del trades[code]
 
         with open(self.active_trades_path, "w", encoding="utf-8") as f:
             json.dump(trades, f, ensure_ascii=False, indent=2)
@@ -552,6 +811,102 @@ class DanteTrader:
                 return json.load(f)
         except Exception:
             return {}
+
+    def _reconcile_active_trades_with_balance(self, trades: dict | None = None) -> dict:
+        if self.is_mock:
+            return trades if trades is not None else self._load_trades()
+
+        trades = trades if trades is not None else self._load_trades()
+        if not trades:
+            return {}
+
+        try:
+            balance_info = self.market_handler.fetch_balance()
+        except Exception as exc:
+            logger.warning(f"Failed to reconcile active trades with balance: {exc}")
+            return trades
+
+        holdings = self._extract_balance_holdings(balance_info)
+        changed = False
+
+        for code in list(trades.keys()):
+            holding = holdings.get(code)
+            if not holding:
+                logger.warning(
+                    "Removing stale active trade not present in balance: {}({})",
+                    trades[code].get("company"),
+                    code,
+                )
+                del trades[code]
+                changed = True
+                continue
+
+            actual_qty = int(holding.get("quantity", 0))
+            if actual_qty <= 0:
+                del trades[code]
+                changed = True
+                continue
+
+            if int(trades[code].get("quantity", 0)) != actual_qty:
+                trades[code]["quantity"] = actual_qty
+                changed = True
+
+            avg_price = int(holding.get("avg_price", 0))
+            if avg_price > 0 and int(trades[code].get("entry_price", 0)) != avg_price:
+                trades[code]["entry_price"] = avg_price
+                changed = True
+
+        if changed:
+            with open(self.active_trades_path, "w", encoding="utf-8") as f:
+                json.dump(trades, f, ensure_ascii=False, indent=2)
+
+        return trades
+
+    def _extract_balance_holdings(self, balance_info: dict) -> dict[str, dict]:
+        holdings: dict[str, dict] = {}
+        for item in balance_info.get("output1", []):
+            if not isinstance(item, dict):
+                continue
+
+            code = str(
+                item.get("pdno")
+                or item.get("mksc_shrn_iscd")
+                or item.get("prdt_no")
+                or ""
+            ).strip()
+            if not code:
+                continue
+
+            quantity = self._to_int(
+                item.get("hldg_qty")
+                or item.get("hold_qty")
+                or item.get("cblc_qty13")
+            )
+            avg_price = self._to_int(
+                item.get("pchs_avg_pric")
+                or item.get("pchs_pric")
+                or item.get("avg_unpr")
+                or item.get("purc_avg_pric")
+            )
+            holdings[code] = {
+                "company": item.get("prdt_name") or item.get("name") or code,
+                "quantity": quantity,
+                "avg_price": avg_price,
+            }
+        return holdings
+
+    def _save_scheduled_orders(self, orders: list[dict]) -> None:
+        with open(self.scheduled_orders_path, "w", encoding="utf-8") as f:
+            json.dump(orders, f, ensure_ascii=False, indent=2)
+
+    def _load_scheduled_orders(self) -> list[dict]:
+        if not self.scheduled_orders_path.exists():
+            return []
+        try:
+            with open(self.scheduled_orders_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
 
     def _mark_trade_stop_loss_pending(self, code: str, pending: bool, trigger_price: float | None = None):
         trades = self._load_trades()
@@ -724,6 +1079,128 @@ class DanteTrader:
     @staticmethod
     def _make_trade_id(code: str, entry_at: str) -> str:
         return f"{code}:{entry_at}"
+
+    def _resolve_stop_loss(
+        self,
+        *,
+        entry_price: int,
+        stop_loss_price: int | None = None,
+        stop_loss_pct: float | None = None,
+    ) -> tuple[int | None, str]:
+        if stop_loss_price is not None:
+            if stop_loss_price <= 0:
+                raise ValueError("손절가는 1원 이상이어야 합니다.")
+            return stop_loss_price, f"지정가 {stop_loss_price:,}원"
+
+        if stop_loss_pct is not None:
+            if stop_loss_pct <= 0 or stop_loss_pct >= 1:
+                raise ValueError("손절률은 0% 초과 100% 미만이어야 합니다.")
+            return int(entry_price * (1 - stop_loss_pct)), f"매매가 기준 {stop_loss_pct * 100:.1f}%"
+
+        if self.default_stop_loss_price is not None:
+            return self.default_stop_loss_price, f"기본 지정가 {self.default_stop_loss_price:,}원"
+
+        if self.default_stop_loss_pct is not None:
+            return (
+                int(entry_price * (1 - self.default_stop_loss_pct)),
+                f"매매가 기준 {self.default_stop_loss_pct * 100:.1f}%",
+            )
+
+        return None, "미설정"
+
+    @staticmethod
+    def _parse_stop_loss_pct(raw: str | None) -> float | None:
+        if raw is None:
+            return None
+
+        normalized = raw.strip().replace("％", "%")
+        if not normalized:
+            return None
+
+        is_percent = normalized.endswith("%")
+        if is_percent:
+            normalized = normalized[:-1].strip()
+
+        value = float(normalized)
+        if is_percent or value > 1:
+            value = value / 100
+
+        if value <= 0 or value >= 1:
+            raise ValueError("DANTE_DEFAULT_STOP_LOSS_PCT must be between 0 and 100%.")
+        return value
+
+    @staticmethod
+    def _parse_stop_loss_price(raw: str | None) -> int | None:
+        if raw is None:
+            return None
+
+        normalized = raw.strip().replace(",", "")
+        if not normalized:
+            return None
+
+        value = int(normalized)
+        if value <= 0:
+            raise ValueError("DANTE_DEFAULT_STOP_LOSS_PRICE must be greater than 0.")
+        return value
+
+    @staticmethod
+    def _format_stop_loss_price(stop_loss_price: int | None) -> str:
+        if stop_loss_price is None:
+            return "미설정"
+        return f"{stop_loss_price:,}원"
+
+    @staticmethod
+    def _format_scheduled_stop_loss(order: dict) -> str:
+        if order.get("stop_loss_price") is not None:
+            return f"{int(order['stop_loss_price']):,}원"
+        if order.get("stop_loss_pct") is not None:
+            return f"{float(order['stop_loss_pct']) * 100:.1f}%"
+        return "기본"
+
+    @staticmethod
+    def _make_scheduled_order_id(code: str, side: str, trigger_price: int) -> str:
+        return f"{code}:{side}:{trigger_price}:{datetime.now().isoformat()}"
+
+    @staticmethod
+    def _should_execute_scheduled_order(side: str, current_price: int, trigger_price: int) -> bool:
+        if side == "buy":
+            return current_price <= trigger_price
+        if side == "sell":
+            return current_price >= trigger_price
+        return False
+
+    @staticmethod
+    def _resolve_sell_quantity(
+        holding_quantity: int,
+        *,
+        quantity: int | None = None,
+        ratio: float | None = None,
+    ) -> int:
+        if quantity is not None:
+            if quantity <= 0:
+                raise ValueError("매도 수량은 1주 이상이어야 합니다.")
+            if quantity > holding_quantity:
+                raise ValueError(f"보유 수량({holding_quantity}주)을 초과해 매도할 수 없습니다.")
+            return quantity
+
+        if ratio is None:
+            raise ValueError("매도 수량 또는 비율이 필요합니다.")
+
+        if ratio <= 0 or ratio > 1:
+            raise ValueError("매도 비율은 0 초과 100% 이하여야 합니다.")
+
+        computed_quantity = max(1, math.floor(holding_quantity * ratio))
+        return min(computed_quantity, holding_quantity)
+
+    @staticmethod
+    def _is_non_retryable_order_failure(message: str) -> bool:
+        keywords = [
+            "보유 내역이 없습니다",
+            "초과해 매도할 수 없습니다",
+            "수량은 1주 이상",
+            "비율은 0 초과 100% 이하여야",
+        ]
+        return any(keyword in message for keyword in keywords)
 
     def _extract_price(self, res: dict, fallback_code: str | None = None) -> int:
         # KIS 주문 결과에서 가격 추출 (실제로는 체결 결과를 확인해야 정확하지만, 편의상 현재가 기반으로 추정하거나 응답에서 확인)
