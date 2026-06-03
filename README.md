@@ -245,6 +245,7 @@ uv run python src/follow_dante_reading/orchestrator.py serve --chat <chat_alias_
 - LLM 판단에 자동 집행을 맡기려면 `DANTE_SIGNAL_STRATEGY=llm_autonomous`와 `--use_llm`을 함께 사용합니다.
 - LLM 자동 집행 기준은 `DANTE_LLM_AUTO_BUY_MIN_CONFIDENCE=0.85`, `DANTE_LLM_AUTO_SELL_MIN_CONFIDENCE=0.75`로 조정할 수 있습니다.
 - 자동 매수는 기본적으로 메시지에서 손절률을 추출해야 실행합니다. 이 조건은 `DANTE_LLM_AUTO_BUY_REQUIRES_STOP_LOSS=false`로 끌 수 있습니다.
+- 자동 매수 리스크 제한은 `DANTE_LLM_AUTO_MAX_BUYS_PER_DAY=3`, `DANTE_LLM_AUTO_MAX_ACTIVE_POSITIONS=5`, `DANTE_LLM_AUTO_SYMBOL_COOLDOWN_MINUTES=60`으로 조정합니다.
 
 Prefect 배포:
 

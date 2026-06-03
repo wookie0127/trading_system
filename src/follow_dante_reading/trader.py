@@ -23,6 +23,7 @@ class DanteTrader:
         self.trade_history_path = project_root() / "data" / "follow_dante_reading" / "trade_history.json"
         self.trade_tracking_path = project_root() / "data" / "follow_dante_reading" / "trade_price_tracking.json"
         self.scheduled_orders_path = project_root() / "data" / "follow_dante_reading" / "scheduled_orders.json"
+        self.autonomous_state_path = project_root() / "data" / "follow_dante_reading" / "autonomous_strategy_state.json"
         self.active_trades_path.parent.mkdir(parents=True, exist_ok=True)
         self.is_mock = is_mock
         self.market_timezone = ZoneInfo(os.getenv("DANTE_MARKET_TIMEZONE", "Asia/Seoul"))
@@ -45,6 +46,9 @@ class DanteTrader:
         self.llm_auto_buy_requires_stop_loss = (
             os.getenv("DANTE_LLM_AUTO_BUY_REQUIRES_STOP_LOSS", "true").lower() == "true"
         )
+        self.llm_auto_max_buys_per_day = int(os.getenv("DANTE_LLM_AUTO_MAX_BUYS_PER_DAY", "3"))
+        self.llm_auto_max_active_positions = int(os.getenv("DANTE_LLM_AUTO_MAX_ACTIVE_POSITIONS", "5"))
+        self.llm_auto_symbol_cooldown_minutes = int(os.getenv("DANTE_LLM_AUTO_SYMBOL_COOLDOWN_MINUTES", "60"))
         if self.is_mock:
             logger.info("DanteTrader initialized in MOCK MODE (No real trades)")
         logger.info(
@@ -63,6 +67,9 @@ class DanteTrader:
             f"llm_auto_buy_min_confidence={self.llm_auto_buy_min_confidence}, "
             f"llm_auto_sell_min_confidence={self.llm_auto_sell_min_confidence}, "
             f"llm_auto_buy_requires_stop_loss={self.llm_auto_buy_requires_stop_loss}, "
+            f"llm_auto_max_buys_per_day={self.llm_auto_max_buys_per_day}, "
+            f"llm_auto_max_active_positions={self.llm_auto_max_active_positions}, "
+            f"llm_auto_symbol_cooldown_minutes={self.llm_auto_symbol_cooldown_minutes}, "
             f"is_mock={self.is_mock}"
         )
 
@@ -91,7 +98,12 @@ class DanteTrader:
             if code in active_trades:
                 logger.info(f"{company}({code}) is already in active trades. Skipping duplicate buy.")
                 return
-            if self._should_auto_execute_signal(signal, expected_action="buy"):
+            if self._should_auto_execute_signal(
+                signal,
+                expected_action="buy",
+                code=code,
+                active_trades=active_trades,
+            ):
                 await self._auto_buy(company, code, signal)
                 return
             await self._confirm_and_buy(company, code, signal)
@@ -116,7 +128,9 @@ class DanteTrader:
         )
         await self.notifier.notify_all(prefix + result_message)
         await self.notifier.notify_diary(prefix + result_message)
-        if not ok:
+        if ok:
+            self._record_autonomous_action("buy", code, company)
+        else:
             logger.warning("LLM auto buy failed: {}", result_message)
 
     async def _auto_sell(self, company: str, code: str, signal: ReadingSignal):
@@ -137,7 +151,9 @@ class DanteTrader:
         )
         await self.notifier.notify_all(prefix + result_message)
         await self.notifier.notify_diary(prefix + result_message)
-        if not ok:
+        if ok:
+            self._record_autonomous_action("sell", code, company)
+        else:
             logger.warning("LLM auto sell failed: {}", result_message)
 
     async def _confirm_and_buy(self, company: str, code: str, signal: ReadingSignal):
@@ -279,7 +295,13 @@ class DanteTrader:
 
         return False
 
-    def _should_auto_execute_signal(self, signal: ReadingSignal, expected_action: str) -> bool:
+    def _should_auto_execute_signal(
+        self,
+        signal: ReadingSignal,
+        expected_action: str,
+        code: str | None = None,
+        active_trades: dict | None = None,
+    ) -> bool:
         if self.signal_strategy not in {"llm_autonomous", "llm-auto", "auto"}:
             return False
 
@@ -295,6 +317,11 @@ class DanteTrader:
                 return False
             if self.llm_auto_buy_requires_stop_loss and signal.stop_loss_pct is None:
                 logger.info("LLM auto buy skipped: stop_loss_pct is required but missing")
+                return False
+            if not code:
+                logger.info("LLM auto buy skipped: symbol code is missing")
+                return False
+            if not self._autonomous_buy_risk_allows(code, active_trades=active_trades):
                 return False
             return True
 
@@ -459,6 +486,7 @@ class DanteTrader:
         cash = int(balance_info.get("output2", [{}])[0].get("dnca_tot_amt", 0)) if not self.is_mock else 10000000 # 모의는 1천만 시작 가정
 
         report = f"💰 **[Account Status]**\n• **예수금**: {cash:,}원\n\n"
+        report += self._build_autonomous_strategy_status()
 
         # 2. 보유 종목 현황
         active_trades = self._reconcile_active_trades_with_balance()
@@ -995,6 +1023,105 @@ class DanteTrader:
                 return json.load(f)
         except Exception:
             return []
+
+    def _autonomous_buy_risk_allows(self, code: str, active_trades: dict | None = None) -> bool:
+        active_trades = active_trades if active_trades is not None else self._load_trades()
+        if self.llm_auto_max_active_positions > 0 and len(active_trades) >= self.llm_auto_max_active_positions:
+            logger.info(
+                "LLM auto buy skipped: active positions {} reached limit {}",
+                len(active_trades),
+                self.llm_auto_max_active_positions,
+            )
+            return False
+
+        state = self._load_autonomous_state()
+        if self.llm_auto_max_buys_per_day > 0 and int(state.get("buy_count", 0)) >= self.llm_auto_max_buys_per_day:
+            logger.info(
+                "LLM auto buy skipped: daily buy count {} reached limit {}",
+                state.get("buy_count", 0),
+                self.llm_auto_max_buys_per_day,
+            )
+            return False
+
+        if self.llm_auto_symbol_cooldown_minutes > 0:
+            last_action_at = self._last_autonomous_action_at(state, "buy", code)
+            if last_action_at:
+                elapsed = self._now_market_tz() - last_action_at
+                cooldown = timedelta(minutes=self.llm_auto_symbol_cooldown_minutes)
+                if elapsed < cooldown:
+                    logger.info(
+                        "LLM auto buy skipped: {} is in cooldown for {:.1f} more minutes",
+                        code,
+                        (cooldown - elapsed).total_seconds() / 60,
+                    )
+                    return False
+
+        return True
+
+    def _record_autonomous_action(self, side: str, code: str, company: str) -> None:
+        state = self._load_autonomous_state()
+        now = self._now_market_tz()
+        actions = state.setdefault("last_actions", {})
+        actions[f"{side}:{code}"] = {
+            "company": company,
+            "executed_at": now.isoformat(),
+        }
+        if side == "buy":
+            state["buy_count"] = int(state.get("buy_count", 0)) + 1
+        self._save_autonomous_state(state)
+
+    def _load_autonomous_state(self) -> dict:
+        today = self._today_market_date()
+        if not self.autonomous_state_path.exists():
+            return {"date": today, "buy_count": 0, "last_actions": {}}
+
+        try:
+            with open(self.autonomous_state_path, "r", encoding="utf-8") as f:
+                state = json.load(f)
+        except Exception:
+            return {"date": today, "buy_count": 0, "last_actions": {}}
+
+        if state.get("date") != today:
+            state["date"] = today
+            state["buy_count"] = 0
+            state.setdefault("last_actions", {})
+        return state
+
+    def _save_autonomous_state(self, state: dict) -> None:
+        with open(self.autonomous_state_path, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+
+    def _last_autonomous_action_at(self, state: dict, side: str, code: str) -> datetime | None:
+        action = state.get("last_actions", {}).get(f"{side}:{code}")
+        if not isinstance(action, dict):
+            return None
+        executed_at_raw = action.get("executed_at")
+        if not executed_at_raw:
+            return None
+        try:
+            executed_at = datetime.fromisoformat(executed_at_raw)
+        except ValueError:
+            return None
+        if executed_at.tzinfo is None:
+            return executed_at.replace(tzinfo=self.market_timezone)
+        return executed_at.astimezone(self.market_timezone)
+
+    def _today_market_date(self) -> str:
+        return self._now_market_tz().date().isoformat()
+
+    def _build_autonomous_strategy_status(self) -> str:
+        if self.signal_strategy not in {"llm_autonomous", "llm-auto", "auto"}:
+            return ""
+
+        state = self._load_autonomous_state()
+        return (
+            "🤖 **LLM 자율 전략**\n"
+            f"• 자동매수: {state.get('buy_count', 0)}/{self.llm_auto_max_buys_per_day}회 "
+            f"/ 최대 보유 {self.llm_auto_max_active_positions}종목\n"
+            f"• 신뢰도 기준: 매수 {self.llm_auto_buy_min_confidence:.2f}, "
+            f"매도 {self.llm_auto_sell_min_confidence:.2f}\n"
+            f"• 종목별 매수 쿨다운: {self.llm_auto_symbol_cooldown_minutes}분\n\n"
+        )
 
     def _mark_trade_stop_loss_pending(self, code: str, pending: bool, trigger_price: float | None = None):
         trades = self._load_trades()
