@@ -39,11 +39,14 @@ async def get_discord_input(
     preferred_channel_name: str | None = None,
     channel_id: str | None = None,
     request_label: str = "📢 **[Input Request]**",
+    prompt_suffix: str = "를 입력해주세요.",
+    response_builder: Callable[[str], str | None] | None = None,
+    response_label: str = "🤖 **[Response]**",
 ) -> str:
     """Discord 채널로부터 입력을 대기합니다."""
     token = os.environ.get("DISCORD_TOKEN") or os.environ.get("DISCORD_BOT_TOKEN")
     target_channel_id = channel_id or os.environ.get("DISCORD_CHANNEL_ID")
-    
+
     if not token or not target_channel_id:
         # 폴백: Discord 정보가 없으면 터미널 입력 사용
         logger.warning("DISCORD_TOKEN or DISCORD_CHANNEL_ID missing. Falling back to terminal input.")
@@ -53,8 +56,7 @@ async def get_discord_input(
     intents.message_content = True
     client = discord.Client(intents=intents)
     selected_channel = {"id": None}
-    
-    # anyio의 MemoryObjectStream을 사용하여 값을 전달받음 (Future 대체)
+
     send_stream, receive_stream = anyio.create_memory_object_stream(1)
 
     @client.event
@@ -82,7 +84,7 @@ async def get_discord_input(
 
         if channel:
             selected_channel["id"] = channel.id
-            await channel.send(f"{request_label} {prompt}를 입력해주세요.")
+            await _send_discord_prompt(channel, request_label, prompt, prompt_suffix)
         else:
             logger.error(
                 "Could not find Discord input channel (name={} or id={})",
@@ -102,10 +104,19 @@ async def get_discord_input(
         content = message.content.strip()
         if content:
             logger.info(f"Received input from Discord: {content}")
+            if response_builder:
+                try:
+                    response_text = response_builder(content)
+                except Exception as exc:
+                    logger.exception("Failed to build Discord response: {}", exc)
+                    response_text = None
+                if response_text:
+                    await message.channel.send(f"{response_label} {response_text}")
             async with send_stream:
                 await send_stream.send(content)
             await client.close()
 
+    result = None
     try:
         async with anyio.create_task_group() as tg:
             tg.start_soon(client.start, token)
@@ -113,15 +124,36 @@ async def get_discord_input(
             with anyio.fail_after(300.0):
                 async with receive_stream:
                     result = await receive_stream.receive()
-                    if result is None:
-                        raise RuntimeError("Discord auth channel not found")
-                    return result
+
+            await client.close()
+            tg.cancel_scope.cancel()
+
+        if result is None:
+            raise RuntimeError("Discord auth channel not found")
+        return result
     except TimeoutError:
         logger.error("Timed out waiting for Discord input.")
         raise RuntimeError("Discord input timeout")
     finally:
         if not client.is_closed():
             await client.close()
+
+
+async def _send_discord_prompt(channel, request_label: str, prompt: str, prompt_suffix: str) -> None:
+    prefix = f"{request_label} " if request_label else ""
+    body = f"{prompt}{prompt_suffix}"
+    max_length = 1900
+
+    if len(prefix + body) <= max_length:
+        await channel.send(prefix + body)
+        return
+
+    await channel.send(prefix + "복기 본문이 길어 여러 메시지로 나눠 보냅니다.")
+    remaining = body
+    while remaining:
+        chunk = remaining[:max_length]
+        await channel.send(chunk)
+        remaining = remaining[max_length:]
 
 
 class TelegramReadingClient:

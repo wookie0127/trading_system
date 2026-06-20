@@ -130,6 +130,7 @@ services:
       - PYTHONPATH=/app/src
       - PYTHONUNBUFFERED=1
       - GEMINI_CLI_TRUST_WORKSPACE=true
+      - DANTE_SIGNAL_STRATEGY=llm_autonomous
       - DANTE_OBSIDIAN_DIARY_DIR=/app/obsidian/invest_diary
     env_file:
       - path: .env

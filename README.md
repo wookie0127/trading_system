@@ -151,6 +151,9 @@ SLACK_CHANNEL_ID: C0XXXXXX
 # Discord - 봇 토큰 방식 (추천)
 DISCORD_TOKEN: your-discord-bot-token
 DISCORD_CHANNEL_ID: your-channel-id-number
+DANTE_INVEST_DIARY_CHANNEL_ID: your-diary-channel-id-number
+DANTE_INVEST_REVIEW_CHANNEL_ID: your-review-channel-id-number
+DANTE_INVEST_REVIEW_CHANNEL_NAME: "📊-매매-복기"
 
 # Discord - 웹훅 방식 (선택)
 # DISCORD_WEBHOOK_URL: https://discord.com/api/webhooks/...
@@ -240,6 +243,9 @@ uv run python src/follow_dante_reading/orchestrator.py serve --chat <chat_alias_
 - 매수 후보 신호에는 `buy` 또는 `skip`으로 응답합니다.
 - 매도 신호에는 `sell` 또는 `skip`으로 응답합니다.
 - `DISCORD_TOKEN` / `DISCORD_CHANNEL_ID`가 없으면 확인 입력은 터미널에서 받습니다.
+- 복기 Markdown과 상호작용 피드백은 `DANTE_INVEST_DIARY_CHANNEL_ID` / `DANTE_INVEST_REVIEW_CHANNEL_ID`로 분리할 수 있습니다.
+- `DANTE_INVEST_REVIEW_CHANNEL_NAME`을 `📊-매매-복기`로 두면 일일 복기 본문을 그 이름의 채널에 올리고, 같은 채널에서 입력한 피드백을 받아 응답 메시지를 다시 전송합니다.
+- Discord에서 상호 의사전달을 빠르게 확인하려면 `!status` → `!strategy` → 질문 입력 → 후보 응답 → `2` 또는 `!select 2` 순서로 진행하면 됩니다.
 - Discord 수동 매수는 `!buy 삼성전자 1 sl=3%` 또는 `!buy 삼성전자 1 65000 sl=62000`처럼 손절률/손절가를 지정할 수 있습니다.
 - 기본 전략은 `DANTE_SIGNAL_STRATEGY=confirm`이며 모든 매수/매도 신호에 승인을 요구합니다.
 - LLM 판단에 자동 집행을 맡기려면 `DANTE_SIGNAL_STRATEGY=llm_autonomous`와 `--use_llm`을 함께 사용합니다.
@@ -513,3 +519,89 @@ print(df.tail(3))
 | `fetch_overseas_index_daily` | `bsop_date` | `clpr` | `oprc` |
 | `fetch_domestic_index_daily` | `bsop_date` | `bstp_nmix_clpr` | `bstp_nmix_oprc` |
 | `fetch_fx_rate_daily` | `bsop_date` | `clos` | `open` |
+
+---
+
+## Trading Research Harness MVP
+
+Pi 기반 research workflow와 연동할 수 있도록 독립 실행 가능한 harness를 추가했습니다. 이번 범위는 실거래가 아니라 데이터 수집, feature 생성, 전략 signal 생성, 단순 백테스트, Markdown 리포트 생성입니다. Harness 내부 데이터 처리는 `polars`를 기본으로 하며, parquet/csv 로드는 `duckdb`를 통해 수행합니다.
+
+### 설치
+
+```bash
+uv sync --dev
+```
+
+### Config
+
+샘플 config는 아래 파일에 있습니다.
+
+- [`configs/tickers.yaml`](/Users/giwooklee/Workspace/trading_system/configs/tickers.yaml)
+- [`configs/strategies.yaml`](/Users/giwooklee/Workspace/trading_system/configs/strategies.yaml)
+- [`configs/backtest.yaml`](/Users/giwooklee/Workspace/trading_system/configs/backtest.yaml)
+
+기본 ticker는 `QQQ`, `SPY`, `^IXIC`, `^VIX`, `KRW=X`, `BTC-USD`, `ETH-USD`, `114800.KS`입니다.
+
+### 단계별 실행
+
+```bash
+python scripts/run_market_data.py
+python scripts/run_features.py
+python scripts/run_strategies.py
+python scripts/run_backtest.py
+python scripts/run_report.py
+```
+
+통합 실행:
+
+```bash
+PYTHONPATH=src python -m trading_harness.supervisor
+```
+
+cmux로 실행:
+
+```bash
+# 네트워크 다운로드 없이 harness 테스트만 실행
+shell/run_trading_harness_cmux.sh test
+
+# 각 agent를 별도 pane으로 띄우고 artifact monitor pane을 함께 실행
+shell/run_trading_harness_cmux.sh agents
+
+# yfinance 다운로드/cache를 포함한 전체 pipeline 실행
+shell/run_trading_harness_cmux.sh pipeline
+
+# 기존 산출물 기반 report 재생성
+shell/run_trading_harness_cmux.sh report
+```
+
+### 산출물
+
+- Raw data: `data/raw/*.parquet`
+- Feature dataset: `data/features/feature_dataset.parquet`
+- Strategy signals:
+  - `data/signals/us_market_shock_inverse_signal.parquet`
+  - `data/signals/trend_following_signal.parquet`
+- Backtest result: `data/backtests/backtest_result.parquet`
+- Markdown report: [`reports/daily_trading_research_report.md`](/Users/giwooklee/Workspace/trading_system/reports/daily_trading_research_report.md)
+
+### 전략
+
+- `us_market_shock_inverse`: 전일 QQQ 하락률이 `-1.5%` 이하이고 VIX 상승률이 `5%` 이상이면 한국 인버스 signal을 생성합니다.
+- `trend_following`: `close > ma_20`이고 `ma_20 > ma_60`이면 long signal을 생성합니다. 초기 대상은 `qqq`, `btc`, `eth`입니다.
+
+### 문서
+
+- [`docs/architecture.md`](/Users/giwooklee/Workspace/trading_system/docs/architecture.md)
+- [`docs/pi_extension_plan.md`](/Users/giwooklee/Workspace/trading_system/docs/pi_extension_plan.md)
+- [`docs/strategy_spec.md`](/Users/giwooklee/Workspace/trading_system/docs/strategy_spec.md)
+- [`docs/backtest_assumptions.md`](/Users/giwooklee/Workspace/trading_system/docs/backtest_assumptions.md)
+
+### 테스트
+
+```bash
+PYTHONPATH=src uv run pytest \
+  tests/test_features.py \
+  tests/test_strategy.py \
+  tests/test_backtest_metrics.py \
+  tests/test_agent_pipeline.py
+```

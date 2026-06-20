@@ -1,0 +1,6 @@
+backtest:
+  fee_rate: 0.0005
+  slippage_rate: 0.0005
+  initial_capital: 1.0
+  trading_days_per_year: 252
+  output: data/backtests/backtest_result.parquet

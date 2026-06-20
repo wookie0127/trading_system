@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import sys
 import csv
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from tenacity import AsyncRetrying, wait_exponential, stop_never, retry_if_exception_type
@@ -51,6 +52,7 @@ class DanteReadingOrchestrator:
         self.chat_aliases = load_chat_aliases()
         self.logs_dir = CURRENT_DIR.parents[2] / "logs" / "follow_dante_reading"
         self.logs_dir.mkdir(parents=True, exist_ok=True)
+        self.strategy_sessions: dict[int, dict] = {}
         self._configure_logging()
 
     async def list_dialogs(
@@ -447,6 +449,7 @@ class DanteReadingOrchestrator:
                     "• `!balance` (잔고): 현재 계좌 잔고 및 보유 종목 조회\n"
                     "• `!buy <종목명> <수량> [목표가격] [sl=손절가|손절률%]`: 즉시 또는 목표가 이하 예약 매수\n"
                     "• `!sell <종목명> <수량|전량|절반|30%> [목표가격]`: 즉시 또는 목표가 이상 예약 매도\n"
+                    "• `!strategy`: 전략 문의를 시작하고 질문에 답한 뒤 후보를 고르고 셀렉합니다.\n"
                     "• `!help` (도움말): 현재 보고 계신 명령어 가이드 표시\n\n"
                     "💡 **매매 승인 프로세스**\n"
                     "기본 전략에서는 텔레그램 신호 포착 시 승인 요청 메시지가 발송됩니다.\n"
@@ -454,6 +457,9 @@ class DanteReadingOrchestrator:
                     "`DANTE_SIGNAL_STRATEGY=llm_autonomous` 설정 시 신뢰도 기준을 통과한 LLM 판단은 승인 없이 집행됩니다."
                 )
                 await message.channel.send(help_text)
+
+            elif await self._handle_strategy_workflow(message, raw_content):
+                return
 
         try:
             await client.start(token)
@@ -526,6 +532,186 @@ class DanteReadingOrchestrator:
             await message.channel.send(result_message)
         else:
             await message.channel.send(result_message)
+
+    async def _handle_strategy_workflow(self, message, raw_content: str) -> bool:
+        channel_id = message.channel.id
+        normalized = raw_content.strip()
+        lowered = normalized.lower()
+        session = self.strategy_sessions.get(channel_id)
+
+        if lowered in {"!strategy", "strategy", "전략", "!전략"}:
+            self.strategy_sessions[channel_id] = {
+                "stage": "awaiting_question",
+                "question": None,
+                "candidates": [],
+                "selected": None,
+                "created_at": datetime.now().isoformat(),
+            }
+            await message.channel.send(
+                "전략 문의를 한 줄로 입력해주세요.\n"
+                "예: `현재 상태 기준 보수적으로 갈지, 공격적으로 갈지`"
+            )
+            return True
+
+        if lowered.startswith(("!strategy question ", "!strategy 문의 ", "!strategy 질문 ")):
+            question = self._extract_command_payload(normalized, 2)
+            if not question:
+                await message.channel.send("전략 문의 내용이 비어 있습니다.")
+                return True
+            self.strategy_sessions[channel_id] = {
+                "stage": "awaiting_selection",
+                "question": question,
+                "candidates": await self._build_strategy_candidates(question),
+                "selected": None,
+                "created_at": datetime.now().isoformat(),
+            }
+            await self._send_strategy_candidates(message, self.strategy_sessions[channel_id])
+            return True
+
+        if lowered.startswith(("!strategy select ", "!select ")):
+            index_raw = self._extract_command_payload(normalized, 1 if lowered.startswith("!select ") else 2)
+            return await self._select_strategy_candidate(message, session, index_raw)
+
+        if lowered in {"!strategy candidate", "!strategy candidates", "!candidate", "후보", "전략 후보"}:
+            if not session or not session.get("question"):
+                await message.channel.send("먼저 `!strategy`로 문의를 시작하고 질문을 입력해주세요.")
+                return True
+            session["stage"] = "awaiting_selection"
+            session["candidates"] = await self._build_strategy_candidates(session["question"])
+            await self._send_strategy_candidates(message, session)
+            return True
+
+        if session and session.get("stage") == "awaiting_question" and not lowered.startswith("!"):
+            question = normalized
+            session.update(
+                {
+                    "stage": "awaiting_selection",
+                    "question": question,
+                    "candidates": await self._build_strategy_candidates(question),
+                    "selected": None,
+                    "updated_at": datetime.now().isoformat(),
+                }
+            )
+            await message.channel.send(f"전략 문의를 받았습니다: `{question}`")
+            await self._send_strategy_candidates(message, session)
+            return True
+
+        if session and session.get("stage") == "awaiting_selection" and normalized.isdigit():
+            return await self._select_strategy_candidate(message, session, normalized)
+
+        return False
+
+    @staticmethod
+    def _extract_command_payload(raw_content: str, split_at: int = 2) -> str:
+        parts = raw_content.strip().split(maxsplit=split_at)
+        if len(parts) <= split_at:
+            return ""
+        return parts[split_at].strip()
+
+    async def _send_strategy_candidates(self, message, session: dict) -> None:
+        question = session.get("question") or "-"
+        candidates = session.get("candidates") or []
+        if not candidates:
+            await message.channel.send("전략 후보를 만들지 못했습니다.")
+            return
+
+        lines = [
+            "🧭 **[전략 후보]**",
+            f"• 문의: {question}",
+            "",
+        ]
+        for idx, candidate in enumerate(candidates, 1):
+            lines.append(f"{idx}. {candidate['title']} - {candidate['reason']}")
+        lines.append("")
+        lines.append("선택하려면 `1`, `2`, `3` 또는 `!select 2`처럼 입력하세요.")
+        await message.channel.send("\n".join(lines))
+
+    async def _select_strategy_candidate(self, message, session: dict | None, index_raw: str) -> bool:
+        if not session or not session.get("candidates"):
+            await message.channel.send("먼저 `!strategy`로 문의를 시작하세요.")
+            return True
+
+        if not index_raw or not re.fullmatch(r"\d+", index_raw.strip()):
+            await message.channel.send("선택값은 숫자로 입력하세요. 예: `2` 또는 `!select 2`")
+            return True
+
+        index = int(index_raw)
+        candidates = session["candidates"]
+        if index < 1 or index > len(candidates):
+            await message.channel.send(f"선택 범위는 1~{len(candidates)}입니다.")
+            return True
+
+        selected = candidates[index - 1]
+        session["selected"] = {
+            "index": index,
+            "title": selected["title"],
+            "reason": selected["reason"],
+            "selected_at": datetime.now().isoformat(),
+        }
+        session["stage"] = "selected"
+        await message.channel.send(
+            "✅ **[전략 셀렉]**\n"
+            f"• 선택: {index}. {selected['title']}\n"
+            f"• 사유: {selected['reason']}"
+        )
+        return True
+
+    async def _build_strategy_candidates(self, question: str) -> list[dict[str, str]]:
+        active_trades = self.trader._reconcile_active_trades_with_balance()
+        holdings_count = len(active_trades)
+        aggregate_pnl = 0
+
+        for code, trade in active_trades.items():
+            try:
+                entry_price = int(trade.get("entry_price") or 0)
+                quantity = int(trade.get("quantity") or 0)
+                current_price = int(self.trader.market_handler.fetch_price(code).get("output", {}).get("stck_prpr", 0))
+                aggregate_pnl += (current_price - entry_price) * quantity
+            except Exception as exc:
+                logger.warning(f"Failed to inspect holding {code} for strategy candidates: {exc}")
+
+        question_hint = question[:80] if question else "현재 상태"
+
+        if holdings_count == 0:
+            return [
+                {
+                    "title": "현금 대기",
+                    "reason": f"{question_hint} 기준으로 보유 종목이 없어 관망을 우선합니다.",
+                },
+                {
+                    "title": "신규 탐색",
+                    "reason": "진입 신호가 들어올 때만 소액으로 점검합니다.",
+                },
+                {
+                    "title": "테스트 진입",
+                    "reason": "상호 의사전달 확인용으로 최소 규모만 검토합니다.",
+                },
+            ]
+
+        if aggregate_pnl > 0:
+            primary_title = "수익 실현 우선"
+            primary_reason = f"{question_hint} 기준으로 이익 구간 포지션의 일부 정리를 먼저 검토합니다."
+        elif aggregate_pnl < 0:
+            primary_title = "리스크 축소 우선"
+            primary_reason = f"{question_hint} 기준으로 손실 포지션의 축소 또는 정리를 먼저 봅니다."
+        else:
+            primary_title = "보유 유지"
+            primary_reason = f"{question_hint} 기준으로 현재 보유를 유지하면서 추가 확인을 합니다."
+
+        return [
+            {
+                "title": primary_title,
+                "reason": primary_reason,
+            },
+            {
+                "title": "보유 종목 점검",
+                "reason": f"보유 {holdings_count}개 종목의 손절선과 평단가를 다시 확인합니다.",
+            },
+            {
+                "title": "신규 후보 보류",
+                "reason": "현재 포지션 정리가 끝난 뒤에만 새로운 후보를 검토합니다.",
+            },
+        ]
 
     @staticmethod
     def _parse_trade_command(raw_content: str, side: str) -> ManualTradeCommand:

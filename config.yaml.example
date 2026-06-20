@@ -3,6 +3,8 @@ SLACK_BOT_TOKEN: xoxb-your-slack-bot-token
 DISCORD_TOKEN: your-discord-bot-token
 DISCORD_CHANNEL_ID: your-default-discord-channel-id
 DANTE_INVEST_DIARY_CHANNEL_ID: your-dante-invest-diary-channel-id
+DANTE_INVEST_REVIEW_CHANNEL_ID: your-dante-invest-review-channel-id
+DANTE_INVEST_REVIEW_CHANNEL_NAME: "📊-매매-복기"
 GEMINI_CLI_COMMAND: gemini
 GEMINI_MODEL: gemini-2.5-flash
 GEMINI_APPROVAL_MODE: yolo

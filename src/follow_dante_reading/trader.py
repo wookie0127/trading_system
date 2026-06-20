@@ -318,7 +318,7 @@ class DanteTrader:
             try:
                 await self.process_daily_review()
             except Exception as e:
-                logger.error(f"Error in daily review loop: {e}")
+                logger.exception("Error in daily review loop: {}", e)
 
             await anyio.sleep(self.daily_review_poll_seconds)
 
@@ -329,17 +329,72 @@ class DanteTrader:
 
         review_date = now.date().isoformat()
         reviews = self._load_daily_reviews()
-        if review_date in reviews:
+
+        review_state = reviews.get(review_date, {})
+        terminal_feedback_states = {"recorded", "skipped", "prompt_failed"}
+        if review_state.get("feedback_text") or review_state.get("feedback_state") in terminal_feedback_states:
             return
 
-        review = self._build_daily_review(now.date())
-        review_path = self._write_daily_review_markdown(now.date(), review)
-        reviews[review_date] = {
-            "created_at": now.isoformat(),
-            "markdown_path": str(review_path),
-        }
+        review = review_state.get("review_text")
+        if not review:
+            review = self._build_daily_review(now.date())
+            review_path = self._write_daily_review_markdown(now.date(), review)
+            review_state.update(
+                {
+                    "created_at": now.isoformat(),
+                    "markdown_path": str(review_path),
+                    "review_text": review,
+                }
+            )
+        else:
+            review_path = Path(review_state.get("markdown_path") or self.obsidian_diary_dir / f"{review_date}.md")
+            if not review_path.exists():
+                self._write_daily_review_markdown(now.date(), review)
+            review_state.setdefault("created_at", now.isoformat())
+            review_state.setdefault("markdown_path", str(review_path))
+            review_state.setdefault("review_text", review)
+
+        reviews[review_date] = review_state
         self._save_daily_reviews(reviews)
-        await self.notifier.notify_diary(review)
+
+        review_channel_name = (
+            os.environ.get("DANTE_INVEST_REVIEW_CHANNEL_NAME")
+            or os.environ.get("REVIEW_CHANNEL_NAME")
+            or "📊-매매-복기"
+        )
+        review_channel_id = self.notifier.review_channel_id or self.notifier.diary_channel_id
+        try:
+            feedback = await get_discord_input(
+                review,
+                preferred_channel_name=review_channel_name,
+                channel_id=review_channel_id,
+                request_label="📘 **[Daily Review]**",
+                prompt_suffix="",
+                response_builder=lambda content: self._build_daily_review_response(content, review_date),
+                response_label="📘 **[Daily Review Ack]**",
+            )
+        except RuntimeError as exc:
+            review_state["feedback_at"] = self._now_market_tz().isoformat()
+            review_state["feedback_state"] = "prompt_failed"
+            review_state["feedback_error"] = str(exc)
+            reviews[review_date] = review_state
+            self._save_daily_reviews(reviews)
+            logger.warning("Daily review feedback prompt failed: {}", exc)
+            return
+
+        normalized_feedback = feedback.strip().lower()
+        review_state["feedback_at"] = self._now_market_tz().isoformat()
+        if normalized_feedback == "skip":
+            review_state["feedback_state"] = "skipped"
+        elif feedback.strip():
+            review_state["feedback_text"] = feedback.strip()
+            review_state["feedback_state"] = "recorded"
+            self._append_daily_review_feedback_markdown(now.date(), feedback)
+        else:
+            review_state["feedback_state"] = "skipped"
+
+        reviews[review_date] = review_state
+        self._save_daily_reviews(reviews)
 
     @staticmethod
     def _is_trade_confirmed(answer: str, expected_action: str) -> bool:
@@ -1442,6 +1497,13 @@ class DanteTrader:
             f.write(review.rstrip() + "\n")
         return path
 
+    def _append_daily_review_feedback_markdown(self, review_date: date, feedback: str) -> None:
+        self.obsidian_diary_dir.mkdir(parents=True, exist_ok=True)
+        path = self.obsidian_diary_dir / f"{review_date.isoformat()}.md"
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("\n## 사용자 피드백\n")
+            f.write(feedback.rstrip() + "\n")
+
     def _load_daily_reviews(self) -> dict:
         if not self.daily_reviews_path.exists():
             return {}
@@ -1454,6 +1516,15 @@ class DanteTrader:
     def _save_daily_reviews(self, reviews: dict) -> None:
         with open(self.daily_reviews_path, "w", encoding="utf-8") as f:
             json.dump(reviews, f, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def _build_daily_review_response(feedback: str, review_date: str) -> str:
+        cleaned = feedback.strip()
+        if not cleaned:
+            return "피드백을 비워 두셨습니다."
+        if cleaned.lower() == "skip":
+            return f"{review_date} 복기 피드백을 건너뛰었습니다."
+        return f"{review_date} 복기 피드백을 기록했습니다: {cleaned[:120]}"
 
     @staticmethod
     def _iso_date(raw_value) -> str | None:
