@@ -7,3 +7,7 @@ chats:
     chat_id: -1003802436601
     username:
     title: "bot_test"
+  chart_master_kospi:
+    chat_id: 3956165696
+    username:
+    title: "차트마스터 코스피방"

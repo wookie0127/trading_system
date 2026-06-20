@@ -143,7 +143,7 @@ services:
       - ${HOME}/.ssh:/root/.ssh:ro
       - ${HOME}/.gemini:/root/.gemini
       - "${HOME}/Documents/Obsidian Vault/TradingSystem:/app/obsidian"
-    command: python src/follow_dante_reading/orchestrator.py serve --chat cafe_share --notify --use_llm
+    command: python src/follow_dante_reading/orchestrator.py serve --chat cafe_share,chart_master_kospi --notify --use_llm
     working_dir: /app
 
 volumes:

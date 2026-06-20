@@ -233,8 +233,8 @@ class DanteReadingOrchestrator:
         notify: bool = True,
         retry_delay_seconds: int = 5,
     ) -> None:
-        resolved_chat = self._resolve_chat(chat)
-        start_msg = f"🚀 **[Dante Bot]** 리스너를 시작합니다. (대상: {resolved_chat})"
+        resolved_chats = self._resolve_chat_list(chat)
+        start_msg = f"🚀 **[Dante Bot]** 리스너를 시작합니다. (대상: {', '.join(map(str, resolved_chats))})"
         logger.info(start_msg)
         if notify:
             await self.notifier.notify_all(start_msg)
@@ -270,13 +270,21 @@ class DanteReadingOrchestrator:
                         self.client.client.remove_event_handler(_handler)
 
                         await self.client.ensure_authorized()
-                        entity = await self.client.resolve_entity(resolved_chat)
-                        logger.info(f"🔍 Resolved entity for {resolved_chat}: ID={getattr(entity, 'id', 'N/A')} Type={type(entity).__name__}")
+                        entities = []
+                        for resolved_chat in resolved_chats:
+                            entity = await self.client.resolve_entity(resolved_chat)
+                            entities.append(entity)
+                            logger.info(
+                                "🔍 Resolved entity for {}: ID={} Type={}",
+                                resolved_chat,
+                                getattr(entity, "id", "N/A"),
+                                type(entity).__name__,
+                            )
 
                         # 핸들러 등록
-                        self.client.client.add_event_handler(_handler, events.NewMessage(chats=entity))
+                        self.client.client.add_event_handler(_handler, events.NewMessage(chats=entities))
 
-                        logger.info(f"Listening for new Telegram messages from: {resolved_chat}")
+                        logger.info(f"Listening for new Telegram messages from: {resolved_chats}")
                         await self.client.client.run_until_disconnected()
 
                     except KeyboardInterrupt:
@@ -380,6 +388,16 @@ class DanteReadingOrchestrator:
 
     def _resolve_chat(self, chat: str | int) -> str | int:
         return resolve_chat_reference(chat, self.chat_aliases)
+
+    def _resolve_chat_list(self, chat: str | int) -> list[str | int]:
+        if isinstance(chat, int):
+            return [self._resolve_chat(chat)]
+
+        parts = [part.strip() for part in str(chat).split(",") if part.strip()]
+        if not parts:
+            raise ValueError("chat reference is empty")
+
+        return [self._resolve_chat(part) for part in parts]
 
     def _configure_logging(self) -> None:
         logger.remove()

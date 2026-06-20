@@ -237,7 +237,17 @@ uv run python src/news/gemini_news_orchestrator.py
 uv run python src/follow_dante_reading/orchestrator.py serve --chat <chat_alias_or_id> --notify
 ```
 
+여러 리딩방을 하나의 봇 프로세스에서 동시에 구독하려면 comma-separated alias를 사용합니다.
+
+```bash
+uv run python src/follow_dante_reading/orchestrator.py serve \
+  --chat cafe_share,chart_master_kospi \
+  --notify \
+  --use_llm
+```
+
 - `PAPER_*` 자격증명만 있으면 모의투자 계좌로 주문합니다.
+- `chart_master_kospi`는 텔레그램 `차트마스터 코스피방` alias입니다. `DANTE_SIGNAL_STRATEGY=llm_autonomous`와 `--use_llm`을 함께 사용하면 이 방의 메시지도 LLM 판단으로 매수/매도 자동 집행 경로를 탑니다.
 - 기본 손절은 `DANTE_DEFAULT_STOP_LOSS_PCT=3%`처럼 매매가 기준 비율로 조정할 수 있습니다.
 - 기본 손절가를 고정 가격으로 쓰려면 `DANTE_DEFAULT_STOP_LOSS_PRICE=65000`을 설정합니다.
 - 매수 후보 신호에는 `buy` 또는 `skip`으로 응답합니다.
