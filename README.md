@@ -267,6 +267,22 @@ uv run python src/follow_dante_reading/orchestrator.py serve \
 - 모든 LLM 판단은 `data/follow_dante_reading/investment_journal.jsonl`에 기록하고, 매일 `DANTE_DAILY_REVIEW_TIME=15:45` 이후 단타/스윙 성과 복기를 Markdown으로 작성합니다.
 - 복기 Markdown 기본 저장 경로는 `DANTE_OBSIDIAN_DIARY_DIR="/Users/giwooklee/Documents/Obsidian Vault/TradingSystem/invest_diary"`이며, Docker에서는 `/app/obsidian/invest_diary`로 마운트해 같은 Obsidian vault에 기록합니다.
 
+#### 리딩/판단 compact archive
+
+그동안의 텔레그램 원문, LLM 파싱 신호, 자동매매 판단 로그를 날짜별로 묶고 해당일 KOSPI 지수 스냅샷을 붙인 compact archive를 만들 수 있습니다.
+
+```bash
+PYTHONPATH=src uv run python scripts/compact_dante_history.py --date 2026-06-20
+```
+
+또는 orchestrator mode로 실행합니다.
+
+```bash
+uv run python src/follow_dante_reading/orchestrator.py compact --start-date 2026-06-20
+```
+
+산출물은 기본적으로 `data/follow_dante_reading/compact/<YYYY-MM-DD>.md`와 `.json`에 저장됩니다. KOSPI context는 `pykrx`의 KOSPI 지수(`1001`) OHLCV를 사용하며, 조회 실패 시 archive는 생성하되 unavailable 상태와 오류 메시지를 함께 남깁니다.
+
 Prefect 배포:
 
 ```bash

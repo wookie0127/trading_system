@@ -20,6 +20,7 @@ from loguru import logger
 from bots.notifier import Notifier
 import discord
 from follow_dante_reading.client import TelegramReadingClient
+from follow_dante_reading.compact import DanteHistoryCompactor
 from follow_dante_reading.config import CHAT_CONFIG_PATH, load_chat_aliases, resolve_chat_reference
 from follow_dante_reading.parser import parse_reading_signal, parse_reading_signal_with_llm
 from follow_dante_reading.store import ReadingStore
@@ -210,6 +211,21 @@ class DanteReadingOrchestrator:
         print(
             f"Relayed {len(messages)} messages from {resolved_chat} "
             f"to Discord channel {discord_channel_id}"
+        )
+
+    def compact_history(
+        self,
+        target_date: str | None = None,
+        output_dir: str | Path | None = None,
+    ) -> None:
+        result = DanteHistoryCompactor(output_dir=output_dir).compact(target_date)
+        print(
+            f"compact_date={result.compact_date.isoformat()} "
+            f"messages={result.message_count} "
+            f"signals={result.signal_count} "
+            f"journal={result.journal_count} "
+            f"markdown={result.markdown_path} "
+            f"json={result.json_path}"
         )
 
     async def listen(
@@ -984,9 +1000,14 @@ def main(
                     end_date=end_date,
                     download_media=download_media,
                 )
+            elif mode == "compact":
+                orchestrator.compact_history(
+                    target_date=start_date,
+                    output_dir=output_file,
+                )
             else:
                 raise ValueError(
-                    "mode must be one of: login, check-session, whoami, dialogs, history, listen, serve, dump, relay-history"
+                    "mode must be one of: login, check-session, whoami, dialogs, history, listen, serve, dump, relay-history, compact"
                 )
         finally:
             await orchestrator.client.close()
