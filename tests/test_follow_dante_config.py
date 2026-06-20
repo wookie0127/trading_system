@@ -12,3 +12,7 @@ def test_resolve_chat_list_supports_comma_separated_aliases():
         3875818348,
         3956165696,
     ]
+    assert orchestrator._resolve_chat_list(("cafe_share", "chart_master_kospi")) == [
+        3875818348,
+        3956165696,
+    ]

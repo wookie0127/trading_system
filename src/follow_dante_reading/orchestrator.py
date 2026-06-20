@@ -392,6 +392,11 @@ class DanteReadingOrchestrator:
     def _resolve_chat_list(self, chat: str | int) -> list[str | int]:
         if isinstance(chat, int):
             return [self._resolve_chat(chat)]
+        if isinstance(chat, (list, tuple)):
+            parts = [str(part).strip() for part in chat if str(part).strip()]
+            if not parts:
+                raise ValueError("chat reference is empty")
+            return [self._resolve_chat(part) for part in parts]
 
         parts = [part.strip() for part in str(chat).split(",") if part.strip()]
         if not parts:
