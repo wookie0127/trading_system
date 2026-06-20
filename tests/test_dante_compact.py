@@ -61,7 +61,7 @@ def test_compact_history_joins_message_signal_decision_with_kospi(tmp_path, monk
             "change_pct": 0.0017,
         }
 
-    journal_path = tmp_path / "project" / "data" / "follow_dante_reading" / "investment_journal.jsonl"
+    journal_path = base_dir / "investment_journal.jsonl"
     _append_jsonl(
         journal_path,
         {
@@ -85,11 +85,6 @@ def test_compact_history_joins_message_signal_decision_with_kospi(tmp_path, monk
         output_dir=tmp_path / "compact",
         kospi_provider=fake_kospi_provider,
     )
-
-    # Point project_root-dependent journal lookup at the fixture tree.
-    import follow_dante_reading.compact as compact_module
-
-    monkeypatch.setattr(compact_module, "project_root", lambda: tmp_path / "project")
 
     result = compactor.compact(compact_date)
 

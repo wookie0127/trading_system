@@ -11,7 +11,6 @@ import FinanceDataReader as fdr
 from loguru import logger
 from pykrx import stock as pykrx_stock
 
-from follow_dante_reading.signal_schema import project_root
 from follow_dante_reading.store import ReadingStore
 
 MARKET_TIMEZONE = ZoneInfo("Asia/Seoul")
@@ -51,7 +50,7 @@ class DanteHistoryCompactor:
             "posted_at",
         )
         journal = _filter_records_by_date(
-            _load_jsonl(project_root() / "data" / "follow_dante_reading" / "investment_journal.jsonl"),
+            _load_jsonl(self.store.base_dir / "investment_journal.jsonl"),
             run_date,
             "posted_at",
         )
