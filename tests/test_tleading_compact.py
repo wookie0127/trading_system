@@ -4,7 +4,7 @@ from datetime import date
 import pandas as pd
 
 from follow_telegram_leading import compact as compact_module
-from follow_telegram_leading.compact import DanteHistoryCompactor
+from follow_telegram_leading.compact import TleadingHistoryCompactor
 
 
 def _append_jsonl(path, payload):
@@ -82,7 +82,7 @@ def test_compact_history_joins_message_signal_decision_with_kospi(tmp_path, monk
         },
     )
 
-    compactor = DanteHistoryCompactor(
+    compactor = TleadingHistoryCompactor(
         base_dir=base_dir,
         output_dir=tmp_path / "compact",
         kospi_provider=fake_kospi_provider,

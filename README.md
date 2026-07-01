@@ -18,10 +18,16 @@ docker compose up -d --build
 
 ```
 src/
-├── kis_auth_handler.py          # 토큰 발급 및 갱신
-├── kis_config.py                # API endpoint, 경로 설정
-├── kis_market_handler.py        # 코어 API 메서드 모음
-└── market_context_collector.py  # 시장 컨텍스트 데이터 수집 스크립트
+├── api/                         # FastAPI 서버
+├── bots/                        # Slack / Discord 알림 및 대화형 입력
+├── collectors/                  # 외부 데이터 수집기
+├── core/                        # KIS 인증, 설정, 시장/주문 API
+├── follow_telegram_leading/     # 텔레그램 리딩방 파싱, 매매 판단, compact archive
+├── news/                        # RSS 뉴스 요약 Prefect flow
+├── pipelines/                   # 일봉/분봉 수집 Prefect flow
+├── runners/                     # 장중 수집 데몬 등 실행 진입점
+├── storage/                     # Parquet/DB 저장 유틸리티
+└── trading_harness/             # research harness agents, features, backtest, report
 ```
 
 ---
@@ -82,11 +88,11 @@ docker compose up -d --build
 # 의존성 설치 (uv 사용 시)
 uv sync
 
-# 데이터 수집 실행
-python src/market_context_collector.py
+# 대표 데이터 수집 flow 실행
+PYTHONPATH=src uv run python src/pipelines/daily_yahoo_intraday_orchestrator.py
 
 # API 서버 실행
-PYTHONPATH=src uvicorn api:app --reload
+PYTHONPATH=src uv run uvicorn api.api:app --reload
 ```
 
 ---
@@ -151,27 +157,35 @@ SLACK_CHANNEL_ID: C0XXXXXX
 # Discord - 봇 토큰 방식 (추천)
 DISCORD_TOKEN: your-discord-bot-token
 DISCORD_CHANNEL_ID: your-channel-id-number
-DANTE_INVEST_DIARY_CHANNEL_ID: your-diary-channel-id-number
-DANTE_INVEST_REVIEW_CHANNEL_ID: your-review-channel-id-number
-DANTE_INVEST_REVIEW_CHANNEL_NAME: "📊-매매-복기"
+TLEADING_INVEST_DIARY_CHANNEL_ID: your-diary-channel-id-number
+TLEADING_INVEST_REVIEW_CHANNEL_ID: your-review-channel-id-number
+TLEADING_INVEST_REVIEW_CHANNEL_NAME: "📊-매매-복기"
 
 # Discord - 웹훅 방식 (선택)
 # DISCORD_WEBHOOK_URL: https://discord.com/api/webhooks/...
 ```
 
-### 📰 GPT 아침 뉴스 브리핑
+### 📰 아침 뉴스 브리핑
 
-매일 오전 7시(KST)에 RSS 헤드라인을 수집한 뒤 GPT로 한국어 Markdown 브리핑을 생성해 저장할 수 있습니다.
+매일 오전 7시(KST)에 RSS 헤드라인을 수집한 뒤 OpenAI, Codex CLI, Gemini 중 하나로 한국어 Markdown 브리핑을 생성해 저장할 수 있습니다.
 
 - 기본 저장 경로: `data/news_summaries/YYYY-MM-DD.md`
-- 기본 모델: `gpt-5-mini`
+- 기본 백엔드: `openai`
+- 기본 OpenAI 모델: `gpt-5-mini`
 - 기본 피드: Google News 한국어 종합 / 비즈니스 / 월드 RSS
 
-필수 환경변수:
+주요 환경변수:
 
 ```bash
+NEWS_LLM_BACKEND=openai
 OPENAI_API_KEY=your_openai_api_key
 OPENAI_MODEL=gpt-5-mini
+CODEX_CLI_COMMAND=codex
+CODEX_MODEL=
+GEMINI_CLI_COMMAND=gemini
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_APPROVAL_MODE=yolo
+GEMINI_TIMEOUT_SECONDS=180
 NEWS_RSS_FEEDS=https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko,https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=ko&gl=KR&ceid=KR:ko,https://news.google.com/rss/headlines/section/topic/WORLD?hl=ko&gl=KR&ceid=KR:ko
 NEWS_SUMMARY_DIR=data/news_summaries
 NEWS_MAX_ITEMS=20
@@ -195,8 +209,7 @@ uv run prefect deploy src/news/daily_news_orchestrator.py:daily_news_summary_flo
 
 ### 📰 Gemini CLI 아침 뉴스 브리핑
 
-`docs/codex_news_pipeline.md` 구조를 따라 RSS 헤드라인을 수집하고, Gemini CLI로 요약한 뒤 Obsidian Markdown으로 저장할 수 있습니다.
-Gemini API 키를 코드에서 직접 쓰지 않고, 이미 로그인된 Gemini CLI 세션을 사용합니다.
+Gemini CLI로 요약한 뒤 Obsidian Markdown으로 저장할 수 있습니다. 이 flow는 Gemini API 키를 코드에서 직접 쓰지 않고, 이미 로그인된 Gemini CLI 세션을 사용합니다.
 
 - 기본 저장 경로: `~/Documents/Obsidian Vault/TradingSystem/뉴스요약/YYYY-MM-DD.md`
 - 기본 모델: `gemini-2.5-flash`
@@ -248,36 +261,52 @@ uv run python src/follow_telegram_leading/orchestrator.py serve \
 
 - `PAPER_*` 자격증명만 있으면 모의투자 계좌로 주문합니다.
 - 텔레그램 신호 전략은 채널별로 분리해 기록합니다. `cafe_share`는 `[N]카페 정보공유 소통채널`, `chart_master_kospi`는 `차트마스터 코스피방` 전략명으로 `reading_signals.jsonl`, `investment_journal.jsonl`, compact 복기에 남습니다.
-- `chart_master_kospi`의 `코스피 2계약 매수진입/매도진입`은 코스피 선물 신호입니다. KIS Open API에는 국내선물옵션 API가 있지만, 현재 봇 주문 구현은 국내 주식/ETF 주문 API만 사용하므로 선물 2계약 직접 자동주문은 아직 지원하지 않습니다. 직접 선물 매매를 하려면 국내선물옵션 계좌(`ACNT_PRDT_CD=03`)와 `/uapi/domestic-futureoption/v1/trading/order` 연동을 추가해야 합니다. 그 전까지 자동매매를 하려면 `KODEX 200`, `KODEX 인버스` 또는 `KODEX 200선물인버스2X` 같은 거래 가능 ETF로 방향 신호를 매핑해야 합니다.
-- `DANTE_SIGNAL_STRATEGY=llm_autonomous`와 `--use_llm`을 함께 사용하면 기준을 통과한 텔레그램 신호가 자동 집행 경로를 탑니다.
-- 기본 손절은 `DANTE_DEFAULT_STOP_LOSS_PCT=3%`처럼 매매가 기준 비율로 조정할 수 있습니다.
-- 기본 손절가를 고정 가격으로 쓰려면 `DANTE_DEFAULT_STOP_LOSS_PRICE=65000`을 설정합니다.
+- `chart_master_kospi`의 `코스피 2계약 매수진입/매도진입`은 코스피 선물 신호로 처리합니다. 기본값은 `TLEADING_KOSPI_FUTURES_MODE=tracking`이라 실제 주문 없이 paper position과 PnL만 추적합니다.
+- 코스피 선물 주문을 KIS로 전송하려면 국내선물옵션 계좌 상품코드(`ACNT_PRDT_CD=03`)가 필요합니다. `TLEADING_KOSPI_FUTURES_MODE=paper`는 모의투자 계좌에서, `TLEADING_KOSPI_FUTURES_MODE=live`는 실계좌에서 `/uapi/domestic-futureoption/v1/trading/order`를 호출합니다.
+- 선물 신호 알림은 `TLEADING_KOSPI_FUTURES_CHANNEL_ID`가 있으면 전용 Discord 채널로 보내고, 없으면 기본 `DISCORD_CHANNEL_ID`로 보냅니다.
+- 주문 전환 전 ETF로만 운용하려면 `KODEX 200`, `KODEX 인버스`, `KODEX 200선물인버스2X` 같은 거래 가능 ETF를 별도 전략에서 매핑해야 합니다.
+- `TLEADING_SIGNAL_STRATEGY=llm_autonomous`와 `--use_llm`을 함께 사용하면 기준을 통과한 텔레그램 신호가 자동 집행 경로를 탑니다.
+- 기본 손절은 `TLEADING_DEFAULT_STOP_LOSS_PCT=3%`처럼 매매가 기준 비율로 조정할 수 있습니다.
+- 기본 손절가를 고정 가격으로 쓰려면 `TLEADING_DEFAULT_STOP_LOSS_PRICE=65000`을 설정합니다.
 - 매수 후보 신호에는 `buy` 또는 `skip`으로 응답합니다.
 - 매도 신호에는 `sell` 또는 `skip`으로 응답합니다.
 - `DISCORD_TOKEN` / `DISCORD_CHANNEL_ID`가 없으면 확인 입력은 터미널에서 받습니다.
-- 복기 Markdown과 상호작용 피드백은 `DANTE_INVEST_DIARY_CHANNEL_ID` / `DANTE_INVEST_REVIEW_CHANNEL_ID`로 분리할 수 있습니다.
-- `DANTE_INVEST_REVIEW_CHANNEL_NAME`을 `📊-매매-복기`로 두면 일일 복기 본문을 그 이름의 채널에 올리고, 같은 채널에서 입력한 피드백을 받아 응답 메시지를 다시 전송합니다.
+- 복기 Markdown과 상호작용 피드백은 `TLEADING_INVEST_DIARY_CHANNEL_ID` / `TLEADING_INVEST_REVIEW_CHANNEL_ID`로 분리할 수 있습니다.
+- `TLEADING_INVEST_REVIEW_CHANNEL_NAME`을 `📊-매매-복기`로 두면 일일 복기 본문을 그 이름의 채널에 올리고, 같은 채널에서 입력한 피드백을 받아 응답 메시지를 다시 전송합니다.
 - Discord에서 상호 의사전달을 빠르게 확인하려면 `!status` → `!strategy` → 질문 입력 → 후보 응답 → `2` 또는 `!select 2` 순서로 진행하면 됩니다.
 - Discord 수동 매수는 `!buy 삼성전자 1 sl=3%` 또는 `!buy 삼성전자 1 65000 sl=62000`처럼 손절률/손절가를 지정할 수 있습니다.
-- 기본 전략은 `DANTE_SIGNAL_STRATEGY=confirm`이며 모든 매수/매도 신호에 승인을 요구합니다.
-- LLM 판단에 자동 집행을 맡기려면 `DANTE_SIGNAL_STRATEGY=llm_autonomous`와 `--use_llm`을 함께 사용합니다.
-- 리딩방 파싱 LLM은 기본적으로 Codex CLI를 사용합니다. `DANTE_LLM_BACKEND=codex` 상태에서 `codex login`으로 로그인한 뒤, Docker에서는 `${HOME}/.codex`를 `/root/.codex`로 마운트합니다.
-- Gemini를 쓰려면 `.env`에 `GEMINI_API_KEY`를 설정하고 `DANTE_LLM_BACKEND=gemini`로 바꾸면 됩니다. Gemini 경로는 CLI가 아니라 Google Generative Language API를 직접 호출합니다. LLM 없이 룰 기반 파서만 쓰려면 `DANTE_LLM_BACKEND=rule`을 설정합니다.
+- 기본 전략은 `TLEADING_SIGNAL_STRATEGY=confirm`이며 모든 매수/매도 신호에 승인을 요구합니다.
+- LLM 판단에 자동 집행을 맡기려면 `TLEADING_SIGNAL_STRATEGY=llm_autonomous`와 `--use_llm`을 함께 사용합니다.
+- 리딩방 파싱 LLM은 기본적으로 Codex CLI를 사용합니다. `TLEADING_LLM_BACKEND=codex` 상태에서 `codex login`으로 로그인한 뒤, Docker에서는 `${HOME}/.codex`를 `/root/.codex`로 마운트합니다.
+- Gemini를 쓰려면 `.env`에 `GEMINI_API_KEY`를 설정하고 `TLEADING_LLM_BACKEND=gemini`로 바꾸면 됩니다. Gemini 경로는 CLI가 아니라 Google Generative Language API를 직접 호출합니다. LLM 없이 룰 기반 파서만 쓰려면 `TLEADING_LLM_BACKEND=rule`을 설정합니다.
 - Codex CLI 파서는 `codex exec --sandbox read-only --ask-for-approval never --ephemeral --output-schema ...`로 실행되어 파일 수정 없이 구조화된 JSON 판단만 반환합니다.
-- LLM 자동 집행 기준은 `DANTE_LLM_AUTO_BUY_MIN_CONFIDENCE=0.85`, `DANTE_LLM_AUTO_SELL_MIN_CONFIDENCE=0.75`로 조정할 수 있습니다.
-- 자동 매수는 기본적으로 메시지에서 손절률을 추출해야 실행합니다. 이 조건은 `DANTE_LLM_AUTO_BUY_REQUIRES_STOP_LOSS=false`로 끌 수 있습니다.
-- 자동 매수 리스크 제한은 `DANTE_LLM_AUTO_MAX_BUYS_PER_DAY=3`, `DANTE_LLM_AUTO_MAX_ACTIVE_POSITIONS=5`, `DANTE_LLM_AUTO_SYMBOL_COOLDOWN_MINUTES=60`으로 조정합니다.
-- LLM은 매수 후보를 `daytrade`(단타), `swing`(스윙), `unknown`으로 분류하며, 단타/스윙은 각각 `DANTE_LLM_DAYTRADE_BUY_MIN_CONFIDENCE=0.85`, `DANTE_LLM_SWING_BUY_MIN_CONFIDENCE=0.90` 기준을 사용합니다.
-- 스타일별 기본 손절률은 `DANTE_DAYTRADE_STOP_LOSS_PCT=3%`, `DANTE_SWING_STOP_LOSS_PCT=7%`로 조정합니다.
-- 모든 LLM 판단은 `data/follow_telegram_leading/investment_journal.jsonl`에 기록하고, 매일 `DANTE_DAILY_REVIEW_TIME=15:45` 이후 단타/스윙 성과 복기를 Markdown으로 작성합니다.
-- 복기 Markdown 기본 저장 경로는 `DANTE_OBSIDIAN_DIARY_DIR="/Users/giwooklee/Documents/Obsidian Vault/TradingSystem/invest_diary"`이며, Docker에서는 `/app/obsidian/invest_diary`로 마운트해 같은 Obsidian vault에 기록합니다.
+- LLM 자동 집행 기준은 `TLEADING_LLM_AUTO_BUY_MIN_CONFIDENCE=0.85`, `TLEADING_LLM_AUTO_SELL_MIN_CONFIDENCE=0.75`로 조정할 수 있습니다.
+- 자동 매수는 기본적으로 메시지에서 손절률을 추출해야 실행합니다. 이 조건은 `TLEADING_LLM_AUTO_BUY_REQUIRES_STOP_LOSS=false`로 끌 수 있습니다.
+- 자동 매수 리스크 제한은 `TLEADING_LLM_AUTO_MAX_BUYS_PER_DAY=3`, `TLEADING_LLM_AUTO_MAX_ACTIVE_POSITIONS=5`, `TLEADING_LLM_AUTO_SYMBOL_COOLDOWN_MINUTES=60`으로 조정합니다.
+- LLM은 매수 후보를 `daytrade`(단타), `swing`(스윙), `unknown`으로 분류하며, 단타/스윙은 각각 `TLEADING_LLM_DAYTRADE_BUY_MIN_CONFIDENCE=0.85`, `TLEADING_LLM_SWING_BUY_MIN_CONFIDENCE=0.90` 기준을 사용합니다.
+- 스타일별 기본 손절률은 `TLEADING_DAYTRADE_STOP_LOSS_PCT=3%`, `TLEADING_SWING_STOP_LOSS_PCT=7%`로 조정합니다.
+- 모든 LLM 판단은 `data/follow_telegram_leading/investment_journal.jsonl`에 기록하고, 매일 `TLEADING_DAILY_REVIEW_TIME=15:45` 이후 단타/스윙 성과 복기를 Markdown으로 작성합니다.
+- 복기 Markdown 기본 저장 경로는 `TLEADING_OBSIDIAN_DIARY_DIR="/Users/giwooklee/Documents/Obsidian Vault/TradingSystem/invest_diary"`이며, Docker에서는 `/app/obsidian/invest_diary`로 마운트해 같은 Obsidian vault에 기록합니다.
+
+코스피 선물 관련 기본값:
+
+```bash
+TLEADING_KOSPI_FUTURES_CONTRACT_CODE=101W09
+TLEADING_KOSPI_FUTURES_MARKET_CLS_CODE=MKI
+TLEADING_KOSPI_FUTURES_DAILY_BUDGET_KRW=1000000
+TLEADING_KOSPI_FUTURES_CONTRACT_BUDGET_KRW=1000000
+TLEADING_KOSPI_FUTURES_DEFAULT_QUANTITY=1
+TLEADING_KOSPI_FUTURES_MODE=tracking
+TLEADING_KOSPI_FUTURES_TRACK_ONLY=true
+TLEADING_KOSPI_FUTURES_CHANNEL_ID=your-discord-channel-id
+```
 
 #### 리딩/판단 compact archive
 
 그동안의 텔레그램 원문, LLM 파싱 신호, 자동매매 판단 로그를 날짜별로 묶고 해당일 KOSPI 지수 스냅샷을 붙인 compact archive를 만들 수 있습니다.
 
 ```bash
-PYTHONPATH=src uv run python scripts/compact_dante_history.py --date 2026-06-20
+PYTHONPATH=src uv run python scripts/compact_tleading_history.py --date 2026-06-20
 ```
 
 또는 orchestrator mode로 실행합니다.

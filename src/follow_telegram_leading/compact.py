@@ -26,7 +26,7 @@ class CompactResult:
     journal_count: int
 
 
-class DanteHistoryCompactor:
+class TleadingHistoryCompactor:
     def __init__(
         self,
         base_dir: str | Path | None = None,
@@ -80,7 +80,7 @@ class DanteHistoryCompactor:
         markdown_path.write_text(_render_markdown(payload), encoding="utf-8")
 
         logger.info(
-            "Wrote compact Dante history for {}: {} records -> {}",
+            "Wrote compact Tleading history for {}: {} records -> {}",
             run_date,
             len(compact_records),
             markdown_path,
@@ -242,12 +242,12 @@ def _render_markdown(payload: dict) -> str:
     counts = payload["counts"]
     lines = [
         "---",
-        "type: dante-compact-history",
+        "type: tleading-compact-history",
         f"date: {payload['date']}",
-        "system: dante-llm-autonomous",
+        "system: tleading-llm-autonomous",
         "---",
         "",
-        f"# Dante Compact History - {payload['date']}",
+        f"# Tleading Compact History - {payload['date']}",
         "",
         "## KOSPI Context",
         "",

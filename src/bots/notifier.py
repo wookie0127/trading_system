@@ -32,15 +32,15 @@ class Notifier:
         self.discord_token = os.environ.get("DISCORD_TOKEN")
         self.discord_channel_id = os.environ.get("DISCORD_CHANNEL_ID")
         self.diary_channel_id = (
-            os.environ.get("DANTE_INVEST_DIARY_CHANNEL_ID")
+            os.environ.get("TLEADING_INVEST_DIARY_CHANNEL_ID")
             or os.environ.get("DIARY_CHANNEL_ID")
         )
         self.review_channel_id = (
-            os.environ.get("DANTE_INVEST_REVIEW_CHANNEL_ID")
+            os.environ.get("TLEADING_INVEST_REVIEW_CHANNEL_ID")
             or os.environ.get("REVIEW_CHANNEL_ID")
         )
         self.kospi_futures_channel_id = (
-            os.environ.get("DANTE_KOSPI_FUTURES_CHANNEL_ID")
+            os.environ.get("TLEADING_KOSPI_FUTURES_CHANNEL_ID")
             or os.environ.get("KOSPI_FUTURES_CHANNEL_ID")
         )
         
@@ -128,14 +128,14 @@ class Notifier:
         return False
 
     async def notify_diary(self, text: str):
-        """#dante_invest_diary 채널에 기록합니다."""
+        """#tleading_invest_diary 채널에 기록합니다."""
         if self.diary_channel_id:
             logger.info(f"Sending diary notification to channel {self.diary_channel_id}")
             await self.send_discord_async(text, channel_id=self.diary_channel_id)
         else:
             # 다이어리 채널이 없으면 기본 채널로 전송
             logger.info(
-                "No DANTE_INVEST_DIARY_CHANNEL_ID/DIARY_CHANNEL_ID set. "
+                "No TLEADING_INVEST_DIARY_CHANNEL_ID/DIARY_CHANNEL_ID set. "
                 f"Sending to default channel {self.discord_channel_id}"
             )
             await self.send_discord_async(f"📔 **[Diary]** {text}")
@@ -148,7 +148,7 @@ class Notifier:
             await self.send_discord_async(text, channel_id=target_channel)
         else:
             logger.info(
-                "No DANTE_INVEST_REVIEW_CHANNEL_ID/REVIEW_CHANNEL_ID set. "
+                "No TLEADING_INVEST_REVIEW_CHANNEL_ID/REVIEW_CHANNEL_ID set. "
                 f"Sending to default channel {self.discord_channel_id}"
             )
             await self.send_discord_async(f"📘 **[Review]** {text}")

@@ -20,11 +20,11 @@ from loguru import logger
 from bots.notifier import Notifier
 import discord
 from follow_telegram_leading.client import TelegramReadingClient
-from follow_telegram_leading.compact import DanteHistoryCompactor
+from follow_telegram_leading.compact import TleadingHistoryCompactor
 from follow_telegram_leading.config import CHAT_CONFIG_PATH, load_chat_aliases, resolve_chat_reference
 from follow_telegram_leading.parser import parse_reading_signal, parse_reading_signal_with_llm
 from follow_telegram_leading.store import ReadingStore
-from follow_telegram_leading.trader import DanteTrader
+from follow_telegram_leading.trader import TleadingTrader
 
 
 @dataclass
@@ -37,7 +37,7 @@ class ManualTradeCommand:
     stop_loss_pct: float | None = None
 
 
-class DanteReadingOrchestrator:
+class TleadingReadingOrchestrator:
     def __init__(
         self,
         base_dir: str | Path | None = None,
@@ -48,7 +48,7 @@ class DanteReadingOrchestrator:
         self.store = ReadingStore(base_dir=base_dir)
         self.notifier = Notifier()
         self.client = TelegramReadingClient(use_temp_session=use_temp_session)
-        self.trader = DanteTrader(notifier=self.notifier, is_mock=is_mock)
+        self.trader = TleadingTrader(notifier=self.notifier, is_mock=is_mock)
         self.use_llm = use_llm
         self.chat_aliases = load_chat_aliases()
         self.logs_dir = CURRENT_DIR.parents[2] / "logs" / "follow_telegram_leading"
@@ -218,7 +218,7 @@ class DanteReadingOrchestrator:
         target_date: str | None = None,
         output_dir: str | Path | None = None,
     ) -> None:
-        result = DanteHistoryCompactor(output_dir=output_dir).compact(target_date)
+        result = TleadingHistoryCompactor(output_dir=output_dir).compact(target_date)
         print(
             f"compact_date={result.compact_date.isoformat()} "
             f"messages={result.message_count} "
@@ -250,7 +250,7 @@ class DanteReadingOrchestrator:
         retry_delay_seconds: int = 5,
     ) -> None:
         resolved_chats = self._resolve_chat_list(chat)
-        start_msg = f"🚀 **[Dante Bot]** 리스너를 시작합니다. (대상: {', '.join(map(str, resolved_chats))})"
+        start_msg = f"🚀 **[Tleading Bot]** 리스너를 시작합니다. (대상: {', '.join(map(str, resolved_chats))})"
         logger.info(start_msg)
         if notify:
             await self.notifier.notify_all(start_msg)
@@ -304,7 +304,7 @@ class DanteReadingOrchestrator:
                         await self.client.client.run_until_disconnected()
 
                     except KeyboardInterrupt:
-                        stop_msg = "⏹ **[Dante Bot]** 사용자에 의해 리스너가 중단되었습니다."
+                        stop_msg = "⏹ **[Tleading Bot]** 사용자에 의해 리스너가 중단되었습니다."
                         logger.info(stop_msg)
                         if notify:
                             await self.notifier.notify_all(stop_msg)
@@ -318,7 +318,7 @@ class DanteReadingOrchestrator:
 
     async def _handle_session_error(self, exc, notify):
         """세션 에러 시 Discord 인증 등을 처리합니다."""
-        disconnect_msg = f"❗ **[Dante Bot]** 접속 문제 발생: {exc}\n재인증을 시도합니다."
+        disconnect_msg = f"❗ **[Tleading Bot]** 접속 문제 발생: {exc}\n재인증을 시도합니다."
         logger.warning(disconnect_msg)
         if notify:
             await self.notifier.notify_all(disconnect_msg)
@@ -483,7 +483,7 @@ class DanteReadingOrchestrator:
 
             elif content in ["help", "!help", "도움말", "도움"]:
                 help_text = (
-                    "🤖 **[Dante Bot 명령어 안내]**\n\n"
+                    "🤖 **[Tleading Bot 명령어 안내]**\n\n"
                     "• `!status` (현황, 계좌): 현재 예수금, 보유 종목별 수량/평단가, 예약 주문, 실현 손익 요약\n"
                     "• `!balance` (잔고): 현재 계좌 잔고 및 보유 종목 조회\n"
                     "• `!buy <종목명> <수량> [목표가격] [sl=손절가|손절률%]`: 즉시 또는 목표가 이하 예약 매수\n"
@@ -493,7 +493,7 @@ class DanteReadingOrchestrator:
                     "💡 **매매 승인 프로세스**\n"
                     "기본 전략에서는 텔레그램 신호 포착 시 승인 요청 메시지가 발송됩니다.\n"
                     "해당 메시지에 `buy`, `sell`, `skip` 또는 `y`, `네` 등으로 답장하면 실제/모의 매매가 집행됩니다.\n"
-                    "`DANTE_SIGNAL_STRATEGY=llm_autonomous` 설정 시 신뢰도 기준을 통과한 LLM 판단은 승인 없이 집행됩니다.\n"
+                    "`TLEADING_SIGNAL_STRATEGY=llm_autonomous` 설정 시 신뢰도 기준을 통과한 LLM 판단은 승인 없이 집행됩니다.\n"
                     "텔레그램 신호는 `cafe_share`, `chart_master_kospi`처럼 채널별 전략명으로 기록됩니다."
                 )
                 await message.channel.send(help_text)
@@ -759,15 +759,15 @@ class DanteReadingOrchestrator:
         if len(parts) < 3:
             raise ValueError("❌ 형식이 올바르지 않습니다. 예: `!buy 삼성전자 1`")
 
-        parts, stop_loss_price, stop_loss_pct = DanteReadingOrchestrator._extract_stop_loss_options(parts)
+        parts, stop_loss_price, stop_loss_pct = TleadingReadingOrchestrator._extract_stop_loss_options(parts)
         if len(parts) < 3:
             raise ValueError("❌ 형식이 올바르지 않습니다. 예: `!buy 삼성전자 1 sl=3%`")
         if side != "buy" and (stop_loss_price is not None or stop_loss_pct is not None):
             raise ValueError("❌ 손절 설정은 매수 명령에서만 사용할 수 있습니다.")
 
         trigger_price = None
-        if len(parts) >= 4 and DanteReadingOrchestrator._looks_like_price(parts[-1]):
-            trigger_price = DanteReadingOrchestrator._parse_trigger_price(parts[-1])
+        if len(parts) >= 4 and TleadingReadingOrchestrator._looks_like_price(parts[-1]):
+            trigger_price = TleadingReadingOrchestrator._parse_trigger_price(parts[-1])
             parts = parts[:-1]
 
         target_raw = parts[-1]
@@ -789,7 +789,7 @@ class DanteReadingOrchestrator:
                 stop_loss_pct=stop_loss_pct,
             )
 
-        quantity, ratio = DanteReadingOrchestrator._parse_sell_target(target_raw)
+        quantity, ratio = TleadingReadingOrchestrator._parse_sell_target(target_raw)
         return ManualTradeCommand(
             stock_name=stock_name,
             quantity=quantity,
@@ -861,7 +861,7 @@ class DanteReadingOrchestrator:
                 remaining.append(token)
                 continue
 
-            parsed_price, parsed_pct = DanteReadingOrchestrator._parse_stop_loss_value(key, value)
+            parsed_price, parsed_pct = TleadingReadingOrchestrator._parse_stop_loss_value(key, value)
             if parsed_price is not None:
                 stop_loss_price = parsed_price
                 stop_loss_pct = None
@@ -934,7 +934,7 @@ def main(
     use_llm: bool = False,
 ):
     use_temp_session = mode in {"dialogs", "whoami", "history", "dump", "relay-history"}
-    orchestrator = DanteReadingOrchestrator(
+    orchestrator = TleadingReadingOrchestrator(
         is_mock=mock,
         use_llm=use_llm,
         use_temp_session=use_temp_session,

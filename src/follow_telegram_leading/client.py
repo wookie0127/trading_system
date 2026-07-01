@@ -368,7 +368,7 @@ class TelegramReadingClient:
             posted_at = posted_at.replace(tzinfo=timezone.utc)
 
         return ReadingMessage(
-            source="telegram:dante",
+            source="telegram:tleading",
             chat_id=getattr(chat, "id", None),
             chat_title=getattr(chat, "title", None),
             message_id=message.id,

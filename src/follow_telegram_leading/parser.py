@@ -240,7 +240,7 @@ def parse_reading_signal_with_llm(message: ReadingMessage, model: str | None = N
     if not text:
         return None
 
-    backend = os.getenv("DANTE_LLM_BACKEND", "codex").strip().lower()
+    backend = os.getenv("TLEADING_LLM_BACKEND", "codex").strip().lower()
     strategy_name = resolve_channel_strategy_name(message)
     prompt = _render_llm_prompt(text, strategy_name=strategy_name)
 
@@ -307,7 +307,7 @@ def _run_codex_cli(prompt: str, model: str | None = None) -> str:
     codex_model = model or os.getenv("CODEX_MODEL", "").strip()
     timeout_seconds = int(os.getenv("CODEX_TIMEOUT_SECONDS", "120"))
 
-    with tempfile.TemporaryDirectory(prefix="dante-codex-") as temp_dir:
+    with tempfile.TemporaryDirectory(prefix="tleading-codex-") as temp_dir:
         temp_path = Path(temp_dir)
         schema_path = temp_path / "reading_signal.schema.json"
         output_path = temp_path / "reading_signal.json"
@@ -351,7 +351,7 @@ def _run_codex_cli(prompt: str, model: str | None = None) -> str:
 def _run_gemini_api(prompt: str, model: str | None = None) -> str:
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY or GOOGLE_API_KEY is required for DANTE_LLM_BACKEND=gemini")
+        raise RuntimeError("GEMINI_API_KEY or GOOGLE_API_KEY is required for TLEADING_LLM_BACKEND=gemini")
 
     gemini_model = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     timeout_seconds = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "30"))

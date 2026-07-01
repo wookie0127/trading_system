@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import anyio
 
 from follow_telegram_leading.signal_schema import ReadingSignal
-from follow_telegram_leading.trader import DanteTrader
+from follow_telegram_leading.trader import TleadingTrader
 
 
 class _FakeNotifier:
@@ -75,23 +75,23 @@ def _build_signal(action: str, text: str) -> ReadingSignal:
 
 
 def test_kospi_futures_mode_prefers_explicit_mode(monkeypatch):
-    trader = DanteTrader.__new__(DanteTrader)
-    monkeypatch.setenv("DANTE_KOSPI_FUTURES_MODE", "paper")
-    monkeypatch.setenv("DANTE_KOSPI_FUTURES_TRACK_ONLY", "true")
+    trader = TleadingTrader.__new__(TleadingTrader)
+    monkeypatch.setenv("TLEADING_KOSPI_FUTURES_MODE", "paper")
+    monkeypatch.setenv("TLEADING_KOSPI_FUTURES_TRACK_ONLY", "true")
 
     assert trader._resolve_kospi_futures_mode() == "paper"
 
 
 def test_kospi_futures_mode_falls_back_to_legacy_track_only(monkeypatch):
-    trader = DanteTrader.__new__(DanteTrader)
-    monkeypatch.delenv("DANTE_KOSPI_FUTURES_MODE", raising=False)
-    monkeypatch.setenv("DANTE_KOSPI_FUTURES_TRACK_ONLY", "true")
+    trader = TleadingTrader.__new__(TleadingTrader)
+    monkeypatch.delenv("TLEADING_KOSPI_FUTURES_MODE", raising=False)
+    monkeypatch.setenv("TLEADING_KOSPI_FUTURES_TRACK_ONLY", "true")
 
     assert trader._resolve_kospi_futures_mode() == "tracking"
 
 
 def test_kospi_futures_live_mode_rejects_simulation_handler():
-    trader = DanteTrader.__new__(DanteTrader)
+    trader = TleadingTrader.__new__(TleadingTrader)
     trader.kospi_futures_mode = "live"
     trader.market_handler = type("Handler", (), {"is_simulation": True})()
 
@@ -104,7 +104,7 @@ def test_kospi_futures_live_mode_rejects_simulation_handler():
 
 
 def test_chart_master_kospi_signal_uses_futures_handler_and_budget(tmp_path):
-    trader = DanteTrader.__new__(DanteTrader)
+    trader = TleadingTrader.__new__(TleadingTrader)
     trader.notifier = _FakeNotifier()
     trader.market_handler = _FakeMarketHandler()
     trader.market_timezone = timezone.utc
@@ -137,7 +137,7 @@ def test_chart_master_kospi_signal_uses_futures_handler_and_budget(tmp_path):
 
 
 def test_chart_master_kospi_blocks_repeated_buys_after_insufficient_orderable_amount(tmp_path):
-    trader = DanteTrader.__new__(DanteTrader)
+    trader = TleadingTrader.__new__(TleadingTrader)
     trader.notifier = _FakeNotifier()
     trader.market_handler = _FakeMarketHandler(
         buy_response={"rt_cd": "1", "msg_cd": "40250000", "msg1": "모의투자 주문가능금액이 부족합니다."}
@@ -169,7 +169,7 @@ def test_chart_master_kospi_blocks_repeated_buys_after_insufficient_orderable_am
 
 
 def test_chart_master_kospi_track_only_updates_paper_position_and_pnl(tmp_path):
-    trader = DanteTrader.__new__(DanteTrader)
+    trader = TleadingTrader.__new__(TleadingTrader)
     trader.notifier = _FakeNotifier()
     trader.market_handler = _FakeMarketHandler()
     trader.market_timezone = timezone.utc

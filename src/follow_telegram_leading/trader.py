@@ -20,7 +20,7 @@ from follow_telegram_leading.signal_schema import ReadingSignal, project_root
 FUTURES_QUANTITY_PATTERN = re.compile(r"(\d+)\s*계약")
 
 
-class DanteTrader:
+class TleadingTrader:
     def __init__(self, notifier: Notifier | None = None, is_mock: bool = False):
         self.market_handler = MarketHandler()
         self.notifier = notifier or Notifier()
@@ -34,55 +34,55 @@ class DanteTrader:
         self.daily_reviews_path = project_root() / "data" / "follow_telegram_leading" / "daily_reviews.json"
         self.obsidian_diary_dir = Path(
             os.getenv(
-                "DANTE_OBSIDIAN_DIARY_DIR",
+                "TLEADING_OBSIDIAN_DIARY_DIR",
                 "/Users/giwooklee/Documents/Obsidian Vault/TradingSystem/invest_diary",
             )
         )
         self.active_trades_path.parent.mkdir(parents=True, exist_ok=True)
         self.is_mock = is_mock
-        self.market_timezone = ZoneInfo(os.getenv("DANTE_MARKET_TIMEZONE", "Asia/Seoul"))
+        self.market_timezone = ZoneInfo(os.getenv("TLEADING_MARKET_TIMEZONE", "Asia/Seoul"))
         self.market_open_time = time(9, 0)
         self.market_close_time = time(15, 30)
         self.default_stop_loss_pct = self._parse_stop_loss_pct(
-            os.getenv("DANTE_DEFAULT_STOP_LOSS_PCT", "5%")
+            os.getenv("TLEADING_DEFAULT_STOP_LOSS_PCT", "5%")
         )
         self.default_stop_loss_price = self._parse_stop_loss_price(
-            os.getenv("DANTE_DEFAULT_STOP_LOSS_PRICE")
+            os.getenv("TLEADING_DEFAULT_STOP_LOSS_PRICE")
         )
-        self.order_quantity = int(os.getenv("DANTE_ORDER_QUANTITY", "1"))
-        self.holdings_poll_seconds = int(os.getenv("DANTE_HOLDINGS_POLL_SECONDS", "300"))
-        self.price_tracking_minutes = int(os.getenv("DANTE_PRICE_TRACKING_MINUTES", "15"))
-        self.scheduled_orders_poll_seconds = int(os.getenv("DANTE_SCHEDULED_ORDERS_POLL_SECONDS", "5"))
-        self.auto_stop_loss_enabled = os.getenv("DANTE_AUTO_STOP_LOSS_ENABLED", "true").lower() == "true"
-        self.signal_strategy = os.getenv("DANTE_SIGNAL_STRATEGY", "confirm").strip().lower()
-        self.llm_auto_buy_min_confidence = float(os.getenv("DANTE_LLM_AUTO_BUY_MIN_CONFIDENCE", "0.85"))
-        self.llm_auto_sell_min_confidence = float(os.getenv("DANTE_LLM_AUTO_SELL_MIN_CONFIDENCE", "0.75"))
-        self.llm_daytrade_buy_min_confidence = float(os.getenv("DANTE_LLM_DAYTRADE_BUY_MIN_CONFIDENCE", str(self.llm_auto_buy_min_confidence)))
-        self.llm_swing_buy_min_confidence = float(os.getenv("DANTE_LLM_SWING_BUY_MIN_CONFIDENCE", "0.90"))
-        self.daytrade_stop_loss_pct = self._parse_stop_loss_pct(os.getenv("DANTE_DAYTRADE_STOP_LOSS_PCT", "3%"))
-        self.swing_stop_loss_pct = self._parse_stop_loss_pct(os.getenv("DANTE_SWING_STOP_LOSS_PCT", "7%"))
+        self.order_quantity = int(os.getenv("TLEADING_ORDER_QUANTITY", "1"))
+        self.holdings_poll_seconds = int(os.getenv("TLEADING_HOLDINGS_POLL_SECONDS", "300"))
+        self.price_tracking_minutes = int(os.getenv("TLEADING_PRICE_TRACKING_MINUTES", "15"))
+        self.scheduled_orders_poll_seconds = int(os.getenv("TLEADING_SCHEDULED_ORDERS_POLL_SECONDS", "5"))
+        self.auto_stop_loss_enabled = os.getenv("TLEADING_AUTO_STOP_LOSS_ENABLED", "true").lower() == "true"
+        self.signal_strategy = os.getenv("TLEADING_SIGNAL_STRATEGY", "confirm").strip().lower()
+        self.llm_auto_buy_min_confidence = float(os.getenv("TLEADING_LLM_AUTO_BUY_MIN_CONFIDENCE", "0.85"))
+        self.llm_auto_sell_min_confidence = float(os.getenv("TLEADING_LLM_AUTO_SELL_MIN_CONFIDENCE", "0.75"))
+        self.llm_daytrade_buy_min_confidence = float(os.getenv("TLEADING_LLM_DAYTRADE_BUY_MIN_CONFIDENCE", str(self.llm_auto_buy_min_confidence)))
+        self.llm_swing_buy_min_confidence = float(os.getenv("TLEADING_LLM_SWING_BUY_MIN_CONFIDENCE", "0.90"))
+        self.daytrade_stop_loss_pct = self._parse_stop_loss_pct(os.getenv("TLEADING_DAYTRADE_STOP_LOSS_PCT", "3%"))
+        self.swing_stop_loss_pct = self._parse_stop_loss_pct(os.getenv("TLEADING_SWING_STOP_LOSS_PCT", "7%"))
         self.llm_auto_buy_requires_stop_loss = (
-            os.getenv("DANTE_LLM_AUTO_BUY_REQUIRES_STOP_LOSS", "true").lower() == "true"
+            os.getenv("TLEADING_LLM_AUTO_BUY_REQUIRES_STOP_LOSS", "true").lower() == "true"
         )
-        self.llm_auto_max_buys_per_day = int(os.getenv("DANTE_LLM_AUTO_MAX_BUYS_PER_DAY", "3"))
-        self.llm_auto_max_active_positions = int(os.getenv("DANTE_LLM_AUTO_MAX_ACTIVE_POSITIONS", "5"))
-        self.llm_auto_symbol_cooldown_minutes = int(os.getenv("DANTE_LLM_AUTO_SYMBOL_COOLDOWN_MINUTES", "60"))
-        self.daily_review_poll_seconds = int(os.getenv("DANTE_DAILY_REVIEW_POLL_SECONDS", "300"))
-        self.daily_review_time = self._parse_hhmm(os.getenv("DANTE_DAILY_REVIEW_TIME", "15:45"))
-        self.kospi_futures_contract_code = os.getenv("DANTE_KOSPI_FUTURES_CONTRACT_CODE", "101W09").strip()
-        self.kospi_futures_market_cls_code = os.getenv("DANTE_KOSPI_FUTURES_MARKET_CLS_CODE", "MKI").strip()
-        self.kospi_futures_daily_budget_krw = int(os.getenv("DANTE_KOSPI_FUTURES_DAILY_BUDGET_KRW", "1000000"))
+        self.llm_auto_max_buys_per_day = int(os.getenv("TLEADING_LLM_AUTO_MAX_BUYS_PER_DAY", "3"))
+        self.llm_auto_max_active_positions = int(os.getenv("TLEADING_LLM_AUTO_MAX_ACTIVE_POSITIONS", "5"))
+        self.llm_auto_symbol_cooldown_minutes = int(os.getenv("TLEADING_LLM_AUTO_SYMBOL_COOLDOWN_MINUTES", "60"))
+        self.daily_review_poll_seconds = int(os.getenv("TLEADING_DAILY_REVIEW_POLL_SECONDS", "300"))
+        self.daily_review_time = self._parse_hhmm(os.getenv("TLEADING_DAILY_REVIEW_TIME", "15:45"))
+        self.kospi_futures_contract_code = os.getenv("TLEADING_KOSPI_FUTURES_CONTRACT_CODE", "101W09").strip()
+        self.kospi_futures_market_cls_code = os.getenv("TLEADING_KOSPI_FUTURES_MARKET_CLS_CODE", "MKI").strip()
+        self.kospi_futures_daily_budget_krw = int(os.getenv("TLEADING_KOSPI_FUTURES_DAILY_BUDGET_KRW", "1000000"))
         self.kospi_futures_contract_budget_krw = int(
-            os.getenv("DANTE_KOSPI_FUTURES_CONTRACT_BUDGET_KRW", str(self.kospi_futures_daily_budget_krw))
+            os.getenv("TLEADING_KOSPI_FUTURES_CONTRACT_BUDGET_KRW", str(self.kospi_futures_daily_budget_krw))
         )
-        self.kospi_futures_default_quantity = int(os.getenv("DANTE_KOSPI_FUTURES_DEFAULT_QUANTITY", "1"))
+        self.kospi_futures_default_quantity = int(os.getenv("TLEADING_KOSPI_FUTURES_DEFAULT_QUANTITY", "1"))
         self.kospi_futures_mode = self._resolve_kospi_futures_mode()
         self.kospi_futures_track_only = self.kospi_futures_mode == "tracking"
         self._validate_kospi_futures_mode()
         if self.is_mock:
-            logger.info("DanteTrader initialized in MOCK MODE (No real trades)")
+            logger.info("TleadingTrader initialized in MOCK MODE (No real trades)")
         logger.info(
-            "DanteTrader config: "
+            "TleadingTrader config: "
             f"order_quantity={self.order_quantity}, "
             f"default_stop_loss_pct={self.default_stop_loss_pct}, "
             f"default_stop_loss_price={self.default_stop_loss_price}, "
@@ -116,9 +116,9 @@ class DanteTrader:
         )
 
     def _resolve_kospi_futures_mode(self) -> str:
-        raw_mode = os.getenv("DANTE_KOSPI_FUTURES_MODE", "").strip().lower()
+        raw_mode = os.getenv("TLEADING_KOSPI_FUTURES_MODE", "").strip().lower()
         if not raw_mode:
-            legacy_track_only = os.getenv("DANTE_KOSPI_FUTURES_TRACK_ONLY", "false").strip().lower()
+            legacy_track_only = os.getenv("TLEADING_KOSPI_FUTURES_TRACK_ONLY", "false").strip().lower()
             return "tracking" if legacy_track_only == "true" else "paper"
 
         aliases = {
@@ -135,7 +135,7 @@ class DanteTrader:
         mode = aliases.get(raw_mode, raw_mode)
         if mode not in {"tracking", "paper", "live"}:
             raise ValueError(
-                "DANTE_KOSPI_FUTURES_MODE must be one of tracking, paper, live "
+                "TLEADING_KOSPI_FUTURES_MODE must be one of tracking, paper, live "
                 f"(got {raw_mode!r})"
             )
         return mode
@@ -146,18 +146,18 @@ class DanteTrader:
 
         if self.kospi_futures_mode == "paper" and not self.market_handler.is_simulation:
             raise ValueError(
-                "DANTE_KOSPI_FUTURES_MODE=paper requires KIS_PROFILE=paper or KIS_SIMULATION=true"
+                "TLEADING_KOSPI_FUTURES_MODE=paper requires KIS_PROFILE=paper or KIS_SIMULATION=true"
             )
 
         if self.kospi_futures_mode == "live" and self.market_handler.is_simulation:
             raise ValueError(
-                "DANTE_KOSPI_FUTURES_MODE=live requires KIS_PROFILE=live and KIS_SIMULATION=false"
+                "TLEADING_KOSPI_FUTURES_MODE=live requires KIS_PROFILE=live and KIS_SIMULATION=false"
             )
 
     async def handle_signal(self, signal: ReadingSignal, tg: anyio.abc.TaskGroup | None = None):
         """매매 신호를 처리하고 필요 시 Discord 컨펌을 요청합니다."""
         # 1. 시그널 요약 다이어리에 기록
-        summary_msg = f"📔 **[Dante Diary]** {signal.company_name or '시황 요약'}\n• 요약: {signal.summary}\n• 판단: {signal.action} / {signal.trade_style} (신뢰도: {signal.confidence:.2f})\n• 근거: {signal.rationale_text}"
+        summary_msg = f"📔 **[Tleading Diary]** {signal.company_name or '시황 요약'}\n• 요약: {signal.summary}\n• 판단: {signal.action} / {signal.trade_style} (신뢰도: {signal.confidence:.2f})\n• 근거: {signal.rationale_text}"
         await self.notifier.notify_diary(summary_msg)
 
         # 2. 매매 액션 처리
@@ -430,7 +430,7 @@ class DanteTrader:
                     broker_budget_msg = (
                         "브로커 응답 기준 모의/실계좌 주문가능금액이 계약 증거금보다 부족합니다. "
                         f"현재 전략 내부 계약예산은 {self.kospi_futures_contract_budget_krw:,}원으로 설정되어 있으므로, "
-                        "실제 선물 증거금 수준에 맞게 `DANTE_KOSPI_FUTURES_CONTRACT_BUDGET_KRW`를 상향하거나 "
+                        "실제 선물 증거금 수준에 맞게 `TLEADING_KOSPI_FUTURES_CONTRACT_BUDGET_KRW`를 상향하거나 "
                         "더 작은 계약 종목으로 변경해야 합니다."
                     )
                     self._save_kospi_futures_state(
@@ -732,7 +732,7 @@ class DanteTrader:
         self._save_daily_reviews(reviews)
 
         review_channel_name = (
-            os.environ.get("DANTE_INVEST_REVIEW_CHANNEL_NAME")
+            os.environ.get("TLEADING_INVEST_REVIEW_CHANNEL_NAME")
             or os.environ.get("REVIEW_CHANNEL_NAME")
             or "📊-매매-복기"
         )
@@ -1753,7 +1753,7 @@ class DanteTrader:
             "---",
             "type: invest-diary",
             f"date: {date_key}",
-            "system: dante-llm-autonomous",
+            "system: tleading-llm-autonomous",
             "---",
             "",
             f"# 투자 복기 - {date_key}",
@@ -2211,7 +2211,7 @@ class DanteTrader:
             value = value / 100
 
         if value <= 0 or value >= 1:
-            raise ValueError("DANTE_DEFAULT_STOP_LOSS_PCT must be between 0 and 100%.")
+            raise ValueError("TLEADING_DEFAULT_STOP_LOSS_PCT must be between 0 and 100%.")
         return value
 
     @staticmethod
@@ -2225,7 +2225,7 @@ class DanteTrader:
 
         value = int(normalized)
         if value <= 0:
-            raise ValueError("DANTE_DEFAULT_STOP_LOSS_PRICE must be greater than 0.")
+            raise ValueError("TLEADING_DEFAULT_STOP_LOSS_PRICE must be greater than 0.")
         return value
 
     @staticmethod

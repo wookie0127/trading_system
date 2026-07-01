@@ -7,7 +7,7 @@ from follow_telegram_leading.signal_schema import ReadingMessage
 
 def _message(*, chat_id: int | None, chat_title: str | None, text: str) -> ReadingMessage:
     return ReadingMessage(
-        source="telegram:dante",
+        source="telegram:tleading",
         chat_id=chat_id,
         chat_title=chat_title,
         message_id=1,
@@ -95,7 +95,7 @@ def test_gemini_backend_uses_api_key_without_cli(monkeypatch):
         captured["timeout"] = timeout
         return FakeResponse()
 
-    monkeypatch.setenv("DANTE_LLM_BACKEND", "gemini")
+    monkeypatch.setenv("TLEADING_LLM_BACKEND", "gemini")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(parser.httpx, "post", fake_post)
 
