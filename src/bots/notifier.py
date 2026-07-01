@@ -35,6 +35,14 @@ class Notifier:
             os.environ.get("DANTE_INVEST_DIARY_CHANNEL_ID")
             or os.environ.get("DIARY_CHANNEL_ID")
         )
+        self.review_channel_id = (
+            os.environ.get("DANTE_INVEST_REVIEW_CHANNEL_ID")
+            or os.environ.get("REVIEW_CHANNEL_ID")
+        )
+        self.kospi_futures_channel_id = (
+            os.environ.get("DANTE_KOSPI_FUTURES_CHANNEL_ID")
+            or os.environ.get("KOSPI_FUTURES_CHANNEL_ID")
+        )
         
         # DISCORD_BOT_TOKEN 명칭 호환성 처리
         if not self.discord_token:
@@ -132,10 +140,33 @@ class Notifier:
             )
             await self.send_discord_async(f"📔 **[Diary]** {text}")
 
+    async def notify_review(self, text: str):
+        """상호작용 복기 채널에 기록합니다."""
+        target_channel = self.review_channel_id or self.diary_channel_id
+        if target_channel:
+            logger.info(f"Sending review notification to channel {target_channel}")
+            await self.send_discord_async(text, channel_id=target_channel)
+        else:
+            logger.info(
+                "No DANTE_INVEST_REVIEW_CHANNEL_ID/REVIEW_CHANNEL_ID set. "
+                f"Sending to default channel {self.discord_channel_id}"
+            )
+            await self.send_discord_async(f"📘 **[Review]** {text}")
+
     async def notify_all(self, text: str):
         """Slack과 Discord 양쪽으로 알림 전송"""
         self.send_slack(text)
         await self.send_discord_async(text)
+
+    async def notify_kospi_futures(self, text: str):
+        """코스피 선물 관련 알림을 전용 Discord 채널로 전송"""
+        target_channel = self.kospi_futures_channel_id or self.discord_channel_id
+        if target_channel:
+            logger.info(f"Sending KOSPI futures notification to channel {target_channel}")
+            await self.send_discord_async(text, channel_id=target_channel)
+            return
+
+        logger.warning("KOSPI futures notification skipped: Missing Discord channel ID.")
 
 if __name__ == "__main__":
     import asyncio

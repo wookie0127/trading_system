@@ -1,0 +1,16 @@
+strategies:
+  us_market_shock_inverse:
+    enabled: true
+    qqq_symbol: qqq
+    vix_symbol: vix
+    qqq_return_threshold: -0.015
+    vix_change_threshold: 0.05
+    output: data/signals/us_market_shock_inverse_signal.parquet
+
+  trend_following:
+    enabled: true
+    symbols:
+      - qqq
+      - btc
+      - eth
+    output: data/signals/trend_following_signal.parquet

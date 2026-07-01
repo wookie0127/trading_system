@@ -14,7 +14,9 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 
 # Final stage
-FROM python:3.12-slim
+# Keep the runtime base aligned with the builder so the copied .venv
+# keeps matching Python shared libraries and ABI paths.
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 WORKDIR /app
 
@@ -22,7 +24,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl git ca-certificates \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
-    && npm install -g @google/gemini-cli \
+    && npm install -g @google/gemini-cli @openai/codex \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the installed dependencies from the builder

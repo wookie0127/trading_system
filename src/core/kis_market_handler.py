@@ -296,6 +296,15 @@ class MarketHandler(KISAuthHandler):
 
         return deduped
 
+    @staticmethod
+    def _to_int(value: object) -> int:
+        if value in (None, ""):
+            return 0
+        try:
+            return int(float(str(value).replace(",", "").strip()))
+        except (TypeError, ValueError):
+            return 0
+
     def fetch_price(self, symbol: str) -> dict:
         """현재가 조회 (국내/해외 통합)"""
         if self.exchange == "서울":
@@ -313,6 +322,44 @@ class MarketHandler(KISAuthHandler):
             tr_id="FHKST01010100",
             params=params,
         )
+
+    def fetch_domestic_future_board(self, market_cls_code: str = "MKI") -> dict:
+        """국내 지수선물 전광판 조회"""
+        endpoint = "uapi/domestic-futureoption/v1/quotations/display-board-futures"
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "F",
+            "FID_COND_SCR_DIV_CODE": "20503",
+            "FID_COND_MRKT_CLS_CODE": market_cls_code,
+        }
+        return self._request_with_auth(
+            "GET",
+            endpoint,
+            tr_id="FHPIF05030200",
+            params=params,
+        )
+
+    def fetch_domestic_future_price(self, shtn_pdno: str, market_cls_code: str = "MKI") -> int:
+        """국내 지수선물 현재가 조회"""
+        data = self.fetch_domestic_future_board(market_cls_code=market_cls_code)
+        rows = data.get("output") or data.get("output1") or []
+        if isinstance(rows, dict):
+            rows = [rows]
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            row_code = str(row.get("futs_shrn_iscd") or row.get("shrn_iscd") or "").strip()
+            if row_code and row_code != shtn_pdno:
+                continue
+            price = self._to_int(row.get("futs_prpr") or row.get("futs_antc_cnpr") or row.get("stck_prpr"))
+            if price > 0:
+                return price
+
+        if rows:
+            row = rows[0]
+            if isinstance(row, dict):
+                return self._to_int(row.get("futs_prpr") or row.get("futs_antc_cnpr") or row.get("stck_prpr"))
+        return 0
 
     def fetch_oversea_price(self, symbol: str) -> dict:
         """해외 주식 현재가 조회"""
@@ -573,6 +620,68 @@ class MarketHandler(KISAuthHandler):
         """시장가 매도 주문"""
         return self._create_domestic_order(symbol, quantity, 0, "03", "sell")
 
+    def create_futureoption_buy_order(
+        self,
+        shtn_pdno: str,
+        quantity: int,
+        *,
+        unit_price: int | float = 0,
+        ord_dv: str = "day",
+        ord_prcs_dvsn_cd: str = "02",
+        nmpr_type_cd: str = "02",
+        krx_nmpr_cndt_cd: str = "0",
+        ord_dvsn_cd: str = "02",
+        ctac_tlno: str = "",
+        fuop_item_dvsn_cd: str = "",
+        account_product_code: str | None = None,
+    ) -> dict:
+        """국내선물옵션 시장가/지정가 매수 주문"""
+        return self._create_domestic_futureoption_order(
+            shtn_pdno=shtn_pdno,
+            quantity=quantity,
+            side="buy",
+            unit_price=unit_price,
+            ord_dv=ord_dv,
+            ord_prcs_dvsn_cd=ord_prcs_dvsn_cd,
+            nmpr_type_cd=nmpr_type_cd,
+            krx_nmpr_cndt_cd=krx_nmpr_cndt_cd,
+            ord_dvsn_cd=ord_dvsn_cd,
+            ctac_tlno=ctac_tlno,
+            fuop_item_dvsn_cd=fuop_item_dvsn_cd,
+            account_product_code=account_product_code,
+        )
+
+    def create_futureoption_sell_order(
+        self,
+        shtn_pdno: str,
+        quantity: int,
+        *,
+        unit_price: int | float = 0,
+        ord_dv: str = "day",
+        ord_prcs_dvsn_cd: str = "02",
+        nmpr_type_cd: str = "02",
+        krx_nmpr_cndt_cd: str = "0",
+        ord_dvsn_cd: str = "02",
+        ctac_tlno: str = "",
+        fuop_item_dvsn_cd: str = "",
+        account_product_code: str | None = None,
+    ) -> dict:
+        """국내선물옵션 시장가/지정가 매도 주문"""
+        return self._create_domestic_futureoption_order(
+            shtn_pdno=shtn_pdno,
+            quantity=quantity,
+            side="sell",
+            unit_price=unit_price,
+            ord_dv=ord_dv,
+            ord_prcs_dvsn_cd=ord_prcs_dvsn_cd,
+            nmpr_type_cd=nmpr_type_cd,
+            krx_nmpr_cndt_cd=krx_nmpr_cndt_cd,
+            ord_dvsn_cd=ord_dvsn_cd,
+            ctac_tlno=ctac_tlno,
+            fuop_item_dvsn_cd=fuop_item_dvsn_cd,
+            account_product_code=account_product_code,
+        )
+
     def _create_domestic_order(self, symbol: str, quantity: int, price: int, order_type: str, side: str) -> dict:
         endpoint = "uapi/domestic-stock/v1/trading/order-cash"
         if side == "buy":
@@ -613,6 +722,89 @@ class MarketHandler(KISAuthHandler):
         )
         return data
 
+    def _create_domestic_futureoption_order(
+        self,
+        *,
+        shtn_pdno: str,
+        quantity: int,
+        side: str,
+        unit_price: int | float = 0,
+        ord_dv: str = "day",
+        ord_prcs_dvsn_cd: str = "02",
+        nmpr_type_cd: str = "02",
+        krx_nmpr_cndt_cd: str = "0",
+        ord_dvsn_cd: str = "02",
+        ctac_tlno: str = "",
+        fuop_item_dvsn_cd: str = "",
+        account_product_code: str | None = None,
+    ) -> dict:
+        """국내선물옵션 주문"""
+        if side not in {"buy", "sell"}:
+            raise ValueError("side must be 'buy' or 'sell'")
+
+        env_dv = "demo" if self.is_simulation else "real"
+        if env_dv == "demo" and ord_dv != "day":
+            raise ValueError("domestic futureoption demo orders only support ord_dv='day'")
+        if ord_dv not in {"day", "night"}:
+            raise ValueError("ord_dv can only be 'day' or 'night'")
+
+        acnt_prdt_cd = (account_product_code or self.account_product_code or "").strip()
+        if not acnt_prdt_cd:
+            raise ValueError("Domestic futureoption orders require an account product code")
+        if acnt_prdt_cd != "03":
+            raise ValueError(
+                f"Domestic futureoption orders require ACNT_PRDT_CD=03, got {acnt_prdt_cd!r}"
+            )
+
+        endpoint = "uapi/domestic-futureoption/v1/trading/order"
+        sll_buy_dvsn_cd = "02" if side == "buy" else "01"
+        body = {
+            "ORD_PRCS_DVSN_CD": ord_prcs_dvsn_cd,
+            "CANO": self.acc_no_prefix,
+            "ACNT_PRDT_CD": acnt_prdt_cd,
+            "SLL_BUY_DVSN_CD": sll_buy_dvsn_cd,
+            "SHTN_PDNO": shtn_pdno,
+            "ORD_QTY": str(quantity),
+            "UNIT_PRICE": str(unit_price),
+            "NMPR_TYPE_CD": nmpr_type_cd,
+            "KRX_NMPR_CNDT_CD": krx_nmpr_cndt_cd,
+            "ORD_DVSN_CD": ord_dvsn_cd,
+            "CTAC_TLNO": ctac_tlno,
+            "FUOP_ITEM_DVSN_CD": fuop_item_dvsn_cd,
+        }
+
+        tr_id = "VTTO1101U" if self.is_simulation else "TTTO1101U"
+        request_url = f"{self.base_url}/{endpoint}"
+        logger.info(
+            "KIS futureoption order request profile={} simulation={} side={} shtn_pdno={} qty={} ord_dv={} tr_id={} url={}",
+            self.credential_profile,
+            self.is_simulation,
+            side,
+            shtn_pdno,
+            quantity,
+            ord_dv,
+            tr_id,
+            request_url,
+        )
+        data = self._request_with_auth(
+            "POST",
+            endpoint,
+            tr_id=tr_id,
+            json=body,
+            use_hashkey=True,
+        )
+        logger.info(
+            "KIS futureoption order response side={} shtn_pdno={} qty={} status_code={} rt_cd={} msg_cd={} msg1={}",
+            side,
+            shtn_pdno,
+            quantity,
+            data.get("_http_status_code"),
+            data.get("rt_cd"),
+            data.get("msg_cd"),
+            data.get("msg1"),
+        )
+        return data
+
     def _build_headers(self, tr_id: str, token: str) -> dict[str, str]:
         return {
             "Content-Type": "application/json",
@@ -621,6 +813,22 @@ class MarketHandler(KISAuthHandler):
             "appsecret": self.app_secret,
             "tr_id": tr_id,
         }
+
+    def _issue_hashkey(self, payload: dict) -> str:
+        endpoint = "uapi/hashkey"
+        request_url = f"{self.base_url}/{endpoint}"
+        headers = {
+            "Content-Type": "application/json",
+            "appkey": self.app_key,
+            "appsecret": self.app_secret,
+        }
+        response = httpx.post(request_url, headers=headers, json=payload, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        hashkey = data.get("HASH") or data.get("hash")
+        if not hashkey:
+            raise RuntimeError(f"Failed to issue KIS hashkey: {data}")
+        return str(hashkey)
 
     def _is_token_expired_response(self, data: dict) -> bool:
         message = str(data.get("msg1") or data.get("error_description") or "").lower()
@@ -633,12 +841,15 @@ class MarketHandler(KISAuthHandler):
         tr_id: str,
         params: dict | None = None,
         json: dict | None = None,
+        use_hashkey: bool = False,
     ) -> dict:
         request_url = f"{self.base_url}/{endpoint}"
 
         for attempt in range(2):
             token = self.get_valid_token() if attempt == 0 else self.force_refresh_token()
             headers = self._build_headers(tr_id, token)
+            if use_hashkey and json is not None:
+                headers["hashkey"] = self._issue_hashkey(json)
             response = httpx.request(
                 method,
                 request_url,

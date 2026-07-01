@@ -1,0 +1,22 @@
+data:
+  raw_dir: data/raw
+  features_dir: data/features
+  signals_dir: data/signals
+  backtests_dir: data/backtests
+  reports_dir: reports
+
+market_data:
+  start_date: "2020-01-01"
+  end_date: null
+  interval: "1d"
+  cache: true
+  skip_existing: true
+  tickers:
+    qqq: QQQ
+    spy: SPY
+    nasdaq: ^IXIC
+    vix: ^VIX
+    usdkrw: KRW=X
+    btc: BTC-USD
+    eth: ETH-USD
+    kospi200_inverse: 114800.KS

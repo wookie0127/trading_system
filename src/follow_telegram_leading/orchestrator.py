@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 import sys
 import csv
+import re
+from dataclasses import dataclass
 from datetime import datetime
 from tenacity import AsyncRetrying, wait_exponential, stop_never, retry_if_exception_type
 from telethon import events
@@ -17,11 +19,22 @@ from loguru import logger
 
 from bots.notifier import Notifier
 import discord
-from follow_dante_reading.client import TelegramReadingClient
-from follow_dante_reading.config import CHAT_CONFIG_PATH, load_chat_aliases, resolve_chat_reference
-from follow_dante_reading.parser import parse_reading_signal, parse_reading_signal_with_llm
-from follow_dante_reading.store import ReadingStore
-from follow_dante_reading.trader import DanteTrader
+from follow_telegram_leading.client import TelegramReadingClient
+from follow_telegram_leading.compact import DanteHistoryCompactor
+from follow_telegram_leading.config import CHAT_CONFIG_PATH, load_chat_aliases, resolve_chat_reference
+from follow_telegram_leading.parser import parse_reading_signal, parse_reading_signal_with_llm
+from follow_telegram_leading.store import ReadingStore
+from follow_telegram_leading.trader import DanteTrader
+
+
+@dataclass
+class ManualTradeCommand:
+    stock_name: str
+    quantity: int | None = None
+    ratio: float | None = None
+    trigger_price: int | None = None
+    stop_loss_price: int | None = None
+    stop_loss_pct: float | None = None
 
 
 class DanteReadingOrchestrator:
@@ -38,8 +51,9 @@ class DanteReadingOrchestrator:
         self.trader = DanteTrader(notifier=self.notifier, is_mock=is_mock)
         self.use_llm = use_llm
         self.chat_aliases = load_chat_aliases()
-        self.logs_dir = CURRENT_DIR.parents[2] / "logs" / "follow_dante_reading"
+        self.logs_dir = CURRENT_DIR.parents[2] / "logs" / "follow_telegram_leading"
         self.logs_dir.mkdir(parents=True, exist_ok=True)
+        self.strategy_sessions: dict[int, dict] = {}
         self._configure_logging()
 
     async def list_dialogs(
@@ -199,6 +213,21 @@ class DanteReadingOrchestrator:
             f"to Discord channel {discord_channel_id}"
         )
 
+    def compact_history(
+        self,
+        target_date: str | None = None,
+        output_dir: str | Path | None = None,
+    ) -> None:
+        result = DanteHistoryCompactor(output_dir=output_dir).compact(target_date)
+        print(
+            f"compact_date={result.compact_date.isoformat()} "
+            f"messages={result.message_count} "
+            f"signals={result.signal_count} "
+            f"journal={result.journal_count} "
+            f"markdown={result.markdown_path} "
+            f"json={result.json_path}"
+        )
+
     async def listen(
         self,
         chat: str | int,
@@ -220,8 +249,8 @@ class DanteReadingOrchestrator:
         notify: bool = True,
         retry_delay_seconds: int = 5,
     ) -> None:
-        resolved_chat = self._resolve_chat(chat)
-        start_msg = f"🚀 **[Dante Bot]** 리스너를 시작합니다. (대상: {resolved_chat})"
+        resolved_chats = self._resolve_chat_list(chat)
+        start_msg = f"🚀 **[Dante Bot]** 리스너를 시작합니다. (대상: {', '.join(map(str, resolved_chats))})"
         logger.info(start_msg)
         if notify:
             await self.notifier.notify_all(start_msg)
@@ -230,6 +259,8 @@ class DanteReadingOrchestrator:
             # 수익률 트래킹 루프 및 Discord 커맨드 루프 시작
             tg.start_soon(self.trader.track_holdings_loop, tg)
             tg.start_soon(self.trader.track_trade_prices_loop)
+            tg.start_soon(self.trader.track_scheduled_orders_loop)
+            tg.start_soon(self.trader.daily_review_loop)
             tg.start_soon(self._run_discord_command_loop)
 
             # 텔레그램 이벤트 핸들러 정의
@@ -255,13 +286,21 @@ class DanteReadingOrchestrator:
                         self.client.client.remove_event_handler(_handler)
 
                         await self.client.ensure_authorized()
-                        entity = await self.client.resolve_entity(resolved_chat)
-                        logger.info(f"🔍 Resolved entity for {resolved_chat}: ID={getattr(entity, 'id', 'N/A')} Type={type(entity).__name__}")
+                        entities = []
+                        for resolved_chat in resolved_chats:
+                            entity = await self.client.resolve_entity(resolved_chat)
+                            entities.append(entity)
+                            logger.info(
+                                "🔍 Resolved entity for {}: ID={} Type={}",
+                                resolved_chat,
+                                getattr(entity, "id", "N/A"),
+                                type(entity).__name__,
+                            )
 
                         # 핸들러 등록
-                        self.client.client.add_event_handler(_handler, events.NewMessage(chats=entity))
+                        self.client.client.add_event_handler(_handler, events.NewMessage(chats=entities))
 
-                        logger.info(f"Listening for new Telegram messages from: {resolved_chat}")
+                        logger.info(f"Listening for new Telegram messages from: {resolved_chats}")
                         await self.client.client.run_until_disconnected()
 
                     except KeyboardInterrupt:
@@ -322,7 +361,9 @@ class DanteReadingOrchestrator:
 
         # 2. 파싱된 신호 알림 (ignore가 아닐 때만)
         if signal.action != "ignore" and notify:
-            await self.notifier.notify_diary(self._format_signal(signal))
+            formatted_signal = self._format_signal(signal)
+            await self.notifier.notify_diary(formatted_signal)
+            await self.notifier.notify_all(formatted_signal)
 
         # 매매 신호 처리 (트레이더 호출, TaskGroup 전달)
         await self.trader.handle_signal(signal, tg=tg)
@@ -337,9 +378,10 @@ class DanteReadingOrchestrator:
             stop_loss = f"{signal.stop_loss_pct * 100:.1f}%"
 
         return (
-            f"📨 *Dante Reading Signal*\n"
+            f"📨 *{signal.strategy_name or 'telegram_stock_leading'} Signal*\n"
             f"• 종목: {company}\n"
             f"• 액션: {signal.action}\n"
+            f"• 스타일: {signal.trade_style}\n"
             f"• 손절: {stop_loss}\n"
             f"• 신뢰도: {signal.confidence:.2f}\n"
             f"• 원문: {signal.rationale_text[:120]}"
@@ -362,6 +404,21 @@ class DanteReadingOrchestrator:
 
     def _resolve_chat(self, chat: str | int) -> str | int:
         return resolve_chat_reference(chat, self.chat_aliases)
+
+    def _resolve_chat_list(self, chat: str | int) -> list[str | int]:
+        if isinstance(chat, int):
+            return [self._resolve_chat(chat)]
+        if isinstance(chat, (list, tuple)):
+            parts = [str(part).strip() for part in chat if str(part).strip()]
+            if not parts:
+                raise ValueError("chat reference is empty")
+            return [self._resolve_chat(part) for part in parts]
+
+        parts = [part.strip() for part in str(chat).split(",") if part.strip()]
+        if not parts:
+            raise ValueError("chat reference is empty")
+
+        return [self._resolve_chat(part) for part in parts]
 
     def _configure_logging(self) -> None:
         logger.remove()
@@ -427,16 +484,22 @@ class DanteReadingOrchestrator:
             elif content in ["help", "!help", "도움말", "도움"]:
                 help_text = (
                     "🤖 **[Dante Bot 명령어 안내]**\n\n"
-                    "• `!status` (현황, 계좌): 현재 예수금, 보유 종목 수익률, 실현 손익 요약\n"
+                    "• `!status` (현황, 계좌): 현재 예수금, 보유 종목별 수량/평단가, 예약 주문, 실현 손익 요약\n"
                     "• `!balance` (잔고): 현재 계좌 잔고 및 보유 종목 조회\n"
-                    "• `!buy <종목명> <수량>`: KIS 모의투자/실계좌로 시장가 매수\n"
-                    "• `!sell <종목명> <수량>`: KIS 모의투자/실계좌로 시장가 매도\n"
+                    "• `!buy <종목명> <수량> [목표가격] [sl=손절가|손절률%]`: 즉시 또는 목표가 이하 예약 매수\n"
+                    "• `!sell <종목명> <수량|전량|절반|30%> [목표가격]`: 즉시 또는 목표가 이상 예약 매도\n"
+                    "• `!strategy`: 전략 문의를 시작하고 질문에 답한 뒤 후보를 고르고 셀렉합니다.\n"
                     "• `!help` (도움말): 현재 보고 계신 명령어 가이드 표시\n\n"
                     "💡 **매매 승인 프로세스**\n"
-                    "텔레그램 신호 포착 시 승인 요청 메시지가 발송됩니다.\n"
-                    "해당 메시지에 `buy`, `sell`, `skip` 또는 `y`, `네` 등으로 답장하면 실제/모의 매매가 집행됩니다."
+                    "기본 전략에서는 텔레그램 신호 포착 시 승인 요청 메시지가 발송됩니다.\n"
+                    "해당 메시지에 `buy`, `sell`, `skip` 또는 `y`, `네` 등으로 답장하면 실제/모의 매매가 집행됩니다.\n"
+                    "`DANTE_SIGNAL_STRATEGY=llm_autonomous` 설정 시 신뢰도 기준을 통과한 LLM 판단은 승인 없이 집행됩니다.\n"
+                    "텔레그램 신호는 `cafe_share`, `chart_master_kospi`처럼 채널별 전략명으로 기록됩니다."
                 )
                 await message.channel.send(help_text)
+
+            elif await self._handle_strategy_workflow(message, raw_content):
+                return
 
         try:
             await client.start(token)
@@ -450,62 +513,408 @@ class DanteReadingOrchestrator:
 
     async def _handle_manual_trade_command(self, message, raw_content: str, side: str) -> None:
         try:
-            stock_name, quantity = self._parse_trade_command(raw_content)
+            command = self._parse_trade_command(raw_content, side=side)
         except ValueError as exc:
             await message.channel.send(str(exc))
             return
 
         market_handler = self.trader.market_handler
-        code = market_handler.get_code(stock_name)
+        code = market_handler.get_code(command.stock_name)
         if not code:
-            await message.channel.send(f"❌ '{stock_name}'에 해당하는 종목 코드를 찾을 수 없습니다.")
+            await message.channel.send(f"❌ '{command.stock_name}'에 해당하는 종목 코드를 찾을 수 없습니다.")
             return
 
-        verb = "매수" if side == "buy" else "매도"
+        if command.trigger_price is not None:
+            order = self.trader.schedule_manual_order(
+                company=command.stock_name,
+                code=code,
+                side=side,
+                quantity=command.quantity,
+                ratio=command.ratio,
+                trigger_price=command.trigger_price,
+                stop_loss_price=command.stop_loss_price,
+                stop_loss_pct=command.stop_loss_pct,
+            )
+            target = (
+                f"{command.quantity}주"
+                if command.quantity is not None
+                else f"{int((command.ratio or 0) * 100)}%"
+            )
+            stop_loss = self._format_stop_loss_command(command)
+            await message.channel.send(
+                f"🗓️ 예약 주문 등록 완료: {command.stock_name}({code}) {target} "
+                f"{'매수' if side == 'buy' else '매도'} / 목표가 {order['trigger_price']:,}원"
+                f"{stop_loss}"
+            )
+            return
+
         try:
             if side == "buy":
-                res = market_handler.create_market_buy_order(code, quantity)
+                ok, result_message = await self.trader.place_manual_buy(
+                    command.stock_name,
+                    code,
+                    command.quantity or 0,
+                    stop_loss_price=command.stop_loss_price,
+                    stop_loss_pct=command.stop_loss_pct,
+                )
             else:
-                res = market_handler.create_market_sell_order(code, quantity)
-        except Exception as exc:
-            logger.error(f"Manual {side} command failed: {exc}")
-            await message.channel.send(f"❌ {verb} 주문 중 오류가 발생했습니다: {exc}")
+                ok, result_message = await self.trader.place_manual_sell(
+                    command.stock_name,
+                    code,
+                    quantity=command.quantity,
+                    ratio=command.ratio,
+                )
+        except ValueError as exc:
+            await message.channel.send(f"❌ {exc}")
             return
 
-        if res.get("rt_cd") == "0":
-            price = self.trader._extract_price(res, fallback_code=code)
-            if side == "buy":
-                self.trader.record_executed_buy(stock_name, code, quantity, price)
-            else:
-                self.trader.record_executed_sell(stock_name, code, quantity, price)
-            await message.channel.send(
-                f"✅ {verb} 주문 성공: {stock_name}({code}) {quantity}주"
-            )
+        if ok:
+            await message.channel.send(result_message)
         else:
-            error_msg = res.get("msg1") or res.get("msg_cd") or "알 수 없는 오류"
+            await message.channel.send(result_message)
+
+    async def _handle_strategy_workflow(self, message, raw_content: str) -> bool:
+        channel_id = message.channel.id
+        normalized = raw_content.strip()
+        lowered = normalized.lower()
+        session = self.strategy_sessions.get(channel_id)
+
+        if lowered in {"!strategy", "strategy", "전략", "!전략"}:
+            self.strategy_sessions[channel_id] = {
+                "stage": "awaiting_question",
+                "question": None,
+                "candidates": [],
+                "selected": None,
+                "created_at": datetime.now().isoformat(),
+            }
             await message.channel.send(
-                f"❌ {verb} 주문 실패: {stock_name}({code}) {quantity}주, {error_msg}"
+                "전략 문의를 한 줄로 입력해주세요.\n"
+                "예: `현재 상태 기준 보수적으로 갈지, 공격적으로 갈지`"
             )
+            return True
+
+        if lowered.startswith(("!strategy question ", "!strategy 문의 ", "!strategy 질문 ")):
+            question = self._extract_command_payload(normalized, 2)
+            if not question:
+                await message.channel.send("전략 문의 내용이 비어 있습니다.")
+                return True
+            self.strategy_sessions[channel_id] = {
+                "stage": "awaiting_selection",
+                "question": question,
+                "candidates": await self._build_strategy_candidates(question),
+                "selected": None,
+                "created_at": datetime.now().isoformat(),
+            }
+            await self._send_strategy_candidates(message, self.strategy_sessions[channel_id])
+            return True
+
+        if lowered.startswith(("!strategy select ", "!select ")):
+            index_raw = self._extract_command_payload(normalized, 1 if lowered.startswith("!select ") else 2)
+            return await self._select_strategy_candidate(message, session, index_raw)
+
+        if lowered in {"!strategy candidate", "!strategy candidates", "!candidate", "후보", "전략 후보"}:
+            if not session or not session.get("question"):
+                await message.channel.send("먼저 `!strategy`로 문의를 시작하고 질문을 입력해주세요.")
+                return True
+            session["stage"] = "awaiting_selection"
+            session["candidates"] = await self._build_strategy_candidates(session["question"])
+            await self._send_strategy_candidates(message, session)
+            return True
+
+        if session and session.get("stage") == "awaiting_question" and not lowered.startswith("!"):
+            question = normalized
+            session.update(
+                {
+                    "stage": "awaiting_selection",
+                    "question": question,
+                    "candidates": await self._build_strategy_candidates(question),
+                    "selected": None,
+                    "updated_at": datetime.now().isoformat(),
+                }
+            )
+            await message.channel.send(f"전략 문의를 받았습니다: `{question}`")
+            await self._send_strategy_candidates(message, session)
+            return True
+
+        if session and session.get("stage") == "awaiting_selection" and normalized.isdigit():
+            return await self._select_strategy_candidate(message, session, normalized)
+
+        return False
 
     @staticmethod
-    def _parse_trade_command(raw_content: str) -> tuple[str, int]:
+    def _extract_command_payload(raw_content: str, split_at: int = 2) -> str:
+        parts = raw_content.strip().split(maxsplit=split_at)
+        if len(parts) <= split_at:
+            return ""
+        return parts[split_at].strip()
+
+    async def _send_strategy_candidates(self, message, session: dict) -> None:
+        question = session.get("question") or "-"
+        candidates = session.get("candidates") or []
+        if not candidates:
+            await message.channel.send("전략 후보를 만들지 못했습니다.")
+            return
+
+        lines = [
+            "🧭 **[전략 후보]**",
+            f"• 문의: {question}",
+            "",
+        ]
+        for idx, candidate in enumerate(candidates, 1):
+            lines.append(f"{idx}. {candidate['title']} - {candidate['reason']}")
+        lines.append("")
+        lines.append("선택하려면 `1`, `2`, `3` 또는 `!select 2`처럼 입력하세요.")
+        await message.channel.send("\n".join(lines))
+
+    async def _select_strategy_candidate(self, message, session: dict | None, index_raw: str) -> bool:
+        if not session or not session.get("candidates"):
+            await message.channel.send("먼저 `!strategy`로 문의를 시작하세요.")
+            return True
+
+        if not index_raw or not re.fullmatch(r"\d+", index_raw.strip()):
+            await message.channel.send("선택값은 숫자로 입력하세요. 예: `2` 또는 `!select 2`")
+            return True
+
+        index = int(index_raw)
+        candidates = session["candidates"]
+        if index < 1 or index > len(candidates):
+            await message.channel.send(f"선택 범위는 1~{len(candidates)}입니다.")
+            return True
+
+        selected = candidates[index - 1]
+        session["selected"] = {
+            "index": index,
+            "title": selected["title"],
+            "reason": selected["reason"],
+            "selected_at": datetime.now().isoformat(),
+        }
+        session["stage"] = "selected"
+        await message.channel.send(
+            "✅ **[전략 셀렉]**\n"
+            f"• 선택: {index}. {selected['title']}\n"
+            f"• 사유: {selected['reason']}"
+        )
+        return True
+
+    async def _build_strategy_candidates(self, question: str) -> list[dict[str, str]]:
+        active_trades = self.trader._reconcile_active_trades_with_balance()
+        holdings_count = len(active_trades)
+        aggregate_pnl = 0
+
+        for code, trade in active_trades.items():
+            try:
+                entry_price = int(trade.get("entry_price") or 0)
+                quantity = int(trade.get("quantity") or 0)
+                current_price = int(self.trader.market_handler.fetch_price(code).get("output", {}).get("stck_prpr", 0))
+                aggregate_pnl += (current_price - entry_price) * quantity
+            except Exception as exc:
+                logger.warning(f"Failed to inspect holding {code} for strategy candidates: {exc}")
+
+        question_hint = question[:80] if question else "현재 상태"
+
+        if holdings_count == 0:
+            return [
+                {
+                    "title": "현금 대기",
+                    "reason": f"{question_hint} 기준으로 보유 종목이 없어 관망을 우선합니다.",
+                },
+                {
+                    "title": "신규 탐색",
+                    "reason": "진입 신호가 들어올 때만 소액으로 점검합니다.",
+                },
+                {
+                    "title": "테스트 진입",
+                    "reason": "상호 의사전달 확인용으로 최소 규모만 검토합니다.",
+                },
+            ]
+
+        if aggregate_pnl > 0:
+            primary_title = "수익 실현 우선"
+            primary_reason = f"{question_hint} 기준으로 이익 구간 포지션의 일부 정리를 먼저 검토합니다."
+        elif aggregate_pnl < 0:
+            primary_title = "리스크 축소 우선"
+            primary_reason = f"{question_hint} 기준으로 손실 포지션의 축소 또는 정리를 먼저 봅니다."
+        else:
+            primary_title = "보유 유지"
+            primary_reason = f"{question_hint} 기준으로 현재 보유를 유지하면서 추가 확인을 합니다."
+
+        return [
+            {
+                "title": primary_title,
+                "reason": primary_reason,
+            },
+            {
+                "title": "보유 종목 점검",
+                "reason": f"보유 {holdings_count}개 종목의 손절선과 평단가를 다시 확인합니다.",
+            },
+            {
+                "title": "신규 후보 보류",
+                "reason": "현재 포지션 정리가 끝난 뒤에만 새로운 후보를 검토합니다.",
+            },
+        ]
+
+    @staticmethod
+    def _parse_trade_command(raw_content: str, side: str) -> ManualTradeCommand:
         parts = raw_content.strip().split()
         if len(parts) < 3:
             raise ValueError("❌ 형식이 올바르지 않습니다. 예: `!buy 삼성전자 1`")
 
-        quantity_raw = parts[-1]
-        if not quantity_raw.isdigit():
-            raise ValueError("❌ 수량은 양의 정수여야 합니다. 예: `!sell 삼성전자 2`")
+        parts, stop_loss_price, stop_loss_pct = DanteReadingOrchestrator._extract_stop_loss_options(parts)
+        if len(parts) < 3:
+            raise ValueError("❌ 형식이 올바르지 않습니다. 예: `!buy 삼성전자 1 sl=3%`")
+        if side != "buy" and (stop_loss_price is not None or stop_loss_pct is not None):
+            raise ValueError("❌ 손절 설정은 매수 명령에서만 사용할 수 있습니다.")
 
-        quantity = int(quantity_raw)
-        if quantity <= 0:
-            raise ValueError("❌ 수량은 1 이상이어야 합니다.")
+        trigger_price = None
+        if len(parts) >= 4 and DanteReadingOrchestrator._looks_like_price(parts[-1]):
+            trigger_price = DanteReadingOrchestrator._parse_trigger_price(parts[-1])
+            parts = parts[:-1]
 
+        target_raw = parts[-1]
         stock_name = " ".join(parts[1:-1]).strip()
         if not stock_name:
             raise ValueError("❌ 종목명이 비어 있습니다. 예: `!buy 한미반도체 1`")
 
-        return stock_name, quantity
+        if side == "buy":
+            if not target_raw.isdigit():
+                raise ValueError("❌ 매수 수량은 양의 정수여야 합니다. 예: `!buy 삼성전자 2`")
+            quantity = int(target_raw)
+            if quantity <= 0:
+                raise ValueError("❌ 매수 수량은 1 이상이어야 합니다.")
+            return ManualTradeCommand(
+                stock_name=stock_name,
+                quantity=quantity,
+                trigger_price=trigger_price,
+                stop_loss_price=stop_loss_price,
+                stop_loss_pct=stop_loss_pct,
+            )
+
+        quantity, ratio = DanteReadingOrchestrator._parse_sell_target(target_raw)
+        return ManualTradeCommand(
+            stock_name=stock_name,
+            quantity=quantity,
+            ratio=ratio,
+            trigger_price=trigger_price,
+        )
+
+    @staticmethod
+    def _parse_sell_target(target_raw: str) -> tuple[int | None, float | None]:
+        normalized = target_raw.strip().lower()
+        normalized = normalized.replace("％", "%")
+        alias_map = {
+            "all": (None, 1.0),
+            "전량": (None, 1.0),
+            "전체": (None, 1.0),
+            "half": (None, 0.5),
+            "절반": (None, 0.5),
+            "반": (None, 0.5),
+        }
+        if normalized in alias_map:
+            return alias_map[normalized]
+
+        if normalized.endswith("%"):
+            pct_raw = normalized[:-1]
+            try:
+                pct = float(pct_raw)
+            except ValueError as exc:
+                raise ValueError("❌ 매도 비율 형식이 올바르지 않습니다. 예: `!sell 삼성전자 30%`") from exc
+            if pct <= 0 or pct > 100:
+                raise ValueError("❌ 매도 비율은 0 초과 100 이하만 가능합니다.")
+            return None, pct / 100
+
+        if normalized.isdigit():
+            quantity = int(normalized)
+            if quantity <= 0:
+                raise ValueError("❌ 매도 수량은 1 이상이어야 합니다.")
+            return quantity, None
+
+        raise ValueError("❌ 매도는 수량 또는 `전량`, `절반`, `30%` 형식으로 입력하세요.")
+
+    @staticmethod
+    def _looks_like_price(value: str) -> bool:
+        normalized = value.replace(",", "").strip()
+        return normalized.isdigit()
+
+    @staticmethod
+    def _extract_stop_loss_options(parts: list[str]) -> tuple[list[str], int | None, float | None]:
+        prefixes = {
+            "sl",
+            "stop",
+            "stop_loss",
+            "손절",
+            "손절가",
+            "손절률",
+        }
+        remaining = []
+        stop_loss_price = None
+        stop_loss_pct = None
+
+        for token in parts:
+            if "=" not in token:
+                remaining.append(token)
+                continue
+
+            raw_key, raw_value = token.split("=", 1)
+            key = raw_key.strip().lower()
+            value = raw_value.strip()
+            if key not in prefixes:
+                remaining.append(token)
+                continue
+
+            parsed_price, parsed_pct = DanteReadingOrchestrator._parse_stop_loss_value(key, value)
+            if parsed_price is not None:
+                stop_loss_price = parsed_price
+                stop_loss_pct = None
+            if parsed_pct is not None:
+                stop_loss_pct = parsed_pct
+                stop_loss_price = None
+
+        return remaining, stop_loss_price, stop_loss_pct
+
+    @staticmethod
+    def _parse_stop_loss_value(key: str, value: str) -> tuple[int | None, float | None]:
+        normalized = value.replace(",", "").replace("％", "%").strip()
+        if not normalized:
+            raise ValueError("❌ 손절값이 비어 있습니다. 예: `sl=3%` 또는 `sl=65000`")
+
+        pct_keys = {"손절률"}
+        if normalized.endswith("%") or key in pct_keys:
+            pct_raw = normalized[:-1] if normalized.endswith("%") else normalized
+            try:
+                pct = float(pct_raw)
+            except ValueError as exc:
+                raise ValueError("❌ 손절률 형식이 올바르지 않습니다. 예: `sl=3%`") from exc
+            if pct <= 0 or pct >= 100:
+                raise ValueError("❌ 손절률은 0 초과 100 미만이어야 합니다. 예: `sl=3%`")
+            return None, pct / 100
+
+        if not normalized.isdigit():
+            raise ValueError("❌ 손절가는 숫자여야 합니다. 예: `sl=65000`")
+
+        price = int(normalized)
+        if key in {"sl", "stop", "stop_loss", "손절"} and price < 100:
+            return None, price / 100
+        if price <= 0:
+            raise ValueError("❌ 손절가는 1원 이상이어야 합니다.")
+        return price, None
+
+    @staticmethod
+    def _format_stop_loss_command(command: ManualTradeCommand) -> str:
+        if command.stop_loss_price is not None:
+            return f" / 손절가 {command.stop_loss_price:,}원"
+        if command.stop_loss_pct is not None:
+            return f" / 손절률 {command.stop_loss_pct * 100:.1f}%"
+        return ""
+
+    @staticmethod
+    def _parse_trigger_price(value: str) -> int:
+        normalized = value.replace(",", "").strip()
+        if not normalized.isdigit():
+            raise ValueError("❌ 목표 가격은 숫자여야 합니다. 예: `!buy 삼성전자 1 65000`")
+        trigger_price = int(normalized)
+        if trigger_price <= 0:
+            raise ValueError("❌ 목표 가격은 1원 이상이어야 합니다.")
+        return trigger_price
 
 
 def main(
@@ -592,9 +1001,14 @@ def main(
                     end_date=end_date,
                     download_media=download_media,
                 )
+            elif mode == "compact":
+                orchestrator.compact_history(
+                    target_date=start_date,
+                    output_dir=output_file,
+                )
             else:
                 raise ValueError(
-                    "mode must be one of: login, check-session, whoami, dialogs, history, listen, serve, dump, relay-history"
+                    "mode must be one of: login, check-session, whoami, dialogs, history, listen, serve, dump, relay-history, compact"
                 )
         finally:
             await orchestrator.client.close()
