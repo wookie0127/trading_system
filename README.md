@@ -234,20 +234,22 @@ uv run python src/news/gemini_news_orchestrator.py
 텔레그램 메시지를 파싱한 뒤 Discord 또는 터미널에서 `buy` / `sell` / `skip` 확인을 받고, 승인되면 KIS 계좌로 주문을 넣을 수 있습니다.
 
 ```bash
-uv run python src/follow_dante_reading/orchestrator.py serve --chat <chat_alias_or_id> --notify
+uv run python src/follow_telegram_leading/orchestrator.py serve --chat <chat_alias_or_id> --notify
 ```
 
 여러 리딩방을 하나의 봇 프로세스에서 동시에 구독하려면 comma-separated alias를 사용합니다.
 
 ```bash
-uv run python src/follow_dante_reading/orchestrator.py serve \
+uv run python src/follow_telegram_leading/orchestrator.py serve \
   --chat cafe_share,chart_master_kospi \
   --notify \
   --use_llm
 ```
 
 - `PAPER_*` 자격증명만 있으면 모의투자 계좌로 주문합니다.
-- `chart_master_kospi`는 텔레그램 `차트마스터 코스피방` alias입니다. `DANTE_SIGNAL_STRATEGY=llm_autonomous`와 `--use_llm`을 함께 사용하면 이 방의 메시지도 LLM 판단으로 매수/매도 자동 집행 경로를 탑니다.
+- 텔레그램 신호 전략은 채널별로 분리해 기록합니다. `cafe_share`는 `[N]카페 정보공유 소통채널`, `chart_master_kospi`는 `차트마스터 코스피방` 전략명으로 `reading_signals.jsonl`, `investment_journal.jsonl`, compact 복기에 남습니다.
+- `chart_master_kospi`의 `코스피 2계약 매수진입/매도진입`은 코스피 선물 신호입니다. KIS Open API에는 국내선물옵션 API가 있지만, 현재 봇 주문 구현은 국내 주식/ETF 주문 API만 사용하므로 선물 2계약 직접 자동주문은 아직 지원하지 않습니다. 직접 선물 매매를 하려면 국내선물옵션 계좌(`ACNT_PRDT_CD=03`)와 `/uapi/domestic-futureoption/v1/trading/order` 연동을 추가해야 합니다. 그 전까지 자동매매를 하려면 `KODEX 200`, `KODEX 인버스` 또는 `KODEX 200선물인버스2X` 같은 거래 가능 ETF로 방향 신호를 매핑해야 합니다.
+- `DANTE_SIGNAL_STRATEGY=llm_autonomous`와 `--use_llm`을 함께 사용하면 기준을 통과한 텔레그램 신호가 자동 집행 경로를 탑니다.
 - 기본 손절은 `DANTE_DEFAULT_STOP_LOSS_PCT=3%`처럼 매매가 기준 비율로 조정할 수 있습니다.
 - 기본 손절가를 고정 가격으로 쓰려면 `DANTE_DEFAULT_STOP_LOSS_PRICE=65000`을 설정합니다.
 - 매수 후보 신호에는 `buy` 또는 `skip`으로 응답합니다.
@@ -259,12 +261,15 @@ uv run python src/follow_dante_reading/orchestrator.py serve \
 - Discord 수동 매수는 `!buy 삼성전자 1 sl=3%` 또는 `!buy 삼성전자 1 65000 sl=62000`처럼 손절률/손절가를 지정할 수 있습니다.
 - 기본 전략은 `DANTE_SIGNAL_STRATEGY=confirm`이며 모든 매수/매도 신호에 승인을 요구합니다.
 - LLM 판단에 자동 집행을 맡기려면 `DANTE_SIGNAL_STRATEGY=llm_autonomous`와 `--use_llm`을 함께 사용합니다.
+- 리딩방 파싱 LLM은 기본적으로 Codex CLI를 사용합니다. `DANTE_LLM_BACKEND=codex` 상태에서 `codex login`으로 로그인한 뒤, Docker에서는 `${HOME}/.codex`를 `/root/.codex`로 마운트합니다.
+- Gemini를 쓰려면 `.env`에 `GEMINI_API_KEY`를 설정하고 `DANTE_LLM_BACKEND=gemini`로 바꾸면 됩니다. Gemini 경로는 CLI가 아니라 Google Generative Language API를 직접 호출합니다. LLM 없이 룰 기반 파서만 쓰려면 `DANTE_LLM_BACKEND=rule`을 설정합니다.
+- Codex CLI 파서는 `codex exec --sandbox read-only --ask-for-approval never --ephemeral --output-schema ...`로 실행되어 파일 수정 없이 구조화된 JSON 판단만 반환합니다.
 - LLM 자동 집행 기준은 `DANTE_LLM_AUTO_BUY_MIN_CONFIDENCE=0.85`, `DANTE_LLM_AUTO_SELL_MIN_CONFIDENCE=0.75`로 조정할 수 있습니다.
 - 자동 매수는 기본적으로 메시지에서 손절률을 추출해야 실행합니다. 이 조건은 `DANTE_LLM_AUTO_BUY_REQUIRES_STOP_LOSS=false`로 끌 수 있습니다.
 - 자동 매수 리스크 제한은 `DANTE_LLM_AUTO_MAX_BUYS_PER_DAY=3`, `DANTE_LLM_AUTO_MAX_ACTIVE_POSITIONS=5`, `DANTE_LLM_AUTO_SYMBOL_COOLDOWN_MINUTES=60`으로 조정합니다.
 - LLM은 매수 후보를 `daytrade`(단타), `swing`(스윙), `unknown`으로 분류하며, 단타/스윙은 각각 `DANTE_LLM_DAYTRADE_BUY_MIN_CONFIDENCE=0.85`, `DANTE_LLM_SWING_BUY_MIN_CONFIDENCE=0.90` 기준을 사용합니다.
 - 스타일별 기본 손절률은 `DANTE_DAYTRADE_STOP_LOSS_PCT=3%`, `DANTE_SWING_STOP_LOSS_PCT=7%`로 조정합니다.
-- 모든 LLM 판단은 `data/follow_dante_reading/investment_journal.jsonl`에 기록하고, 매일 `DANTE_DAILY_REVIEW_TIME=15:45` 이후 단타/스윙 성과 복기를 Markdown으로 작성합니다.
+- 모든 LLM 판단은 `data/follow_telegram_leading/investment_journal.jsonl`에 기록하고, 매일 `DANTE_DAILY_REVIEW_TIME=15:45` 이후 단타/스윙 성과 복기를 Markdown으로 작성합니다.
 - 복기 Markdown 기본 저장 경로는 `DANTE_OBSIDIAN_DIARY_DIR="/Users/giwooklee/Documents/Obsidian Vault/TradingSystem/invest_diary"`이며, Docker에서는 `/app/obsidian/invest_diary`로 마운트해 같은 Obsidian vault에 기록합니다.
 
 #### 리딩/판단 compact archive
@@ -278,10 +283,10 @@ PYTHONPATH=src uv run python scripts/compact_dante_history.py --date 2026-06-20
 또는 orchestrator mode로 실행합니다.
 
 ```bash
-uv run python src/follow_dante_reading/orchestrator.py compact --start-date 2026-06-20
+uv run python src/follow_telegram_leading/orchestrator.py compact --start-date 2026-06-20
 ```
 
-산출물은 기본적으로 `data/follow_dante_reading/compact/<YYYY-MM-DD>.md`와 `.json`에 저장됩니다. KOSPI context는 `pykrx`의 KOSPI 지수(`1001`) OHLCV를 사용하며, 조회 실패 시 archive는 생성하되 unavailable 상태와 오류 메시지를 함께 남깁니다.
+산출물은 기본적으로 `data/follow_telegram_leading/compact/<YYYY-MM-DD>.md`와 `.json`에 저장됩니다. KOSPI context는 `pykrx`의 KOSPI 지수(`1001`) OHLCV를 사용하며, 조회 실패 시 archive는 생성하되 unavailable 상태와 오류 메시지를 함께 남깁니다.
 
 Prefect 배포:
 

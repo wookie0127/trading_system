@@ -17,11 +17,15 @@ wheels/
 .env
 config.yaml
 access_token.json
+access_token.*.json
 token.dat
 trading_data.db
 src/follow_dante_reading/*.session*
 src/follow_dante_reading/chats.yaml
+src/follow_telegram_leading/*.session*
+src/follow_telegram_leading/chats.yaml
 logs/follow_dante_reading/
+logs/follow_telegram_leading/
 data
 data/
 market_data/

@@ -3,8 +3,8 @@ from datetime import date
 
 import pandas as pd
 
-from follow_dante_reading import compact as compact_module
-from follow_dante_reading.compact import DanteHistoryCompactor
+from follow_telegram_leading import compact as compact_module
+from follow_telegram_leading.compact import DanteHistoryCompactor
 
 
 def _append_jsonl(path, payload):
@@ -14,7 +14,7 @@ def _append_jsonl(path, payload):
 
 
 def test_compact_history_joins_message_signal_decision_with_kospi(tmp_path, monkeypatch):
-    base_dir = tmp_path / "follow_dante_reading"
+    base_dir = tmp_path / "follow_telegram_leading"
     compact_date = date(2026, 6, 20)
 
     _append_jsonl(
@@ -22,6 +22,7 @@ def test_compact_history_joins_message_signal_decision_with_kospi(tmp_path, monk
         {
             "chat_id": 3956165696,
             "chat_title": "차트마스터 코스피방",
+            "strategy_name": "chart_master_kospi",
             "message_id": 7,
             "posted_at": "2026-06-20T09:10:00+09:00",
             "raw_text": "삼성전자 단타 관찰",
@@ -33,6 +34,7 @@ def test_compact_history_joins_message_signal_decision_with_kospi(tmp_path, monk
         {
             "chat_id": 3956165696,
             "chat_title": "차트마스터 코스피방",
+            "strategy_name": "chart_master_kospi",
             "message_id": 7,
             "posted_at": "2026-06-20T09:10:00+09:00",
             "company_name": "삼성전자",
@@ -92,6 +94,7 @@ def test_compact_history_joins_message_signal_decision_with_kospi(tmp_path, monk
     assert payload["kospi"]["close"] == 3005.0
     assert payload["records"][0]["decision"] == "auto_buy_attempt"
     assert payload["records"][0]["company"] == "삼성전자"
+    assert payload["records"][0]["strategy_name"] == "chart_master_kospi"
     markdown = result.markdown_path.read_text(encoding="utf-8")
     assert "차트마스터 코스피방" in markdown
     assert "KOSPI Context" in markdown

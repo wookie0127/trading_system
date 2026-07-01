@@ -10,7 +10,7 @@ from loguru import logger
 import discord
 import anyio
 
-from follow_dante_reading.signal_schema import ReadingMessage, TelegramDialog  # ty:ignore[unresolved-import]
+from follow_telegram_leading.signal_schema import ReadingMessage, TelegramDialog  # ty:ignore[unresolved-import]
 
 try:
     from telethon import TelegramClient, events
@@ -18,7 +18,7 @@ try:
     from telethon.tl.custom.message import Message
 except ImportError as exc:  # pragma: no cover
     raise RuntimeError(
-        "Telethon is required for follow_dante_reading. Install project dependencies first."
+        "Telethon is required for follow_telegram_leading. Install project dependencies first."
     ) from exc
 
 

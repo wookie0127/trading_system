@@ -19,12 +19,12 @@ from loguru import logger
 
 from bots.notifier import Notifier
 import discord
-from follow_dante_reading.client import TelegramReadingClient
-from follow_dante_reading.compact import DanteHistoryCompactor
-from follow_dante_reading.config import CHAT_CONFIG_PATH, load_chat_aliases, resolve_chat_reference
-from follow_dante_reading.parser import parse_reading_signal, parse_reading_signal_with_llm
-from follow_dante_reading.store import ReadingStore
-from follow_dante_reading.trader import DanteTrader
+from follow_telegram_leading.client import TelegramReadingClient
+from follow_telegram_leading.compact import DanteHistoryCompactor
+from follow_telegram_leading.config import CHAT_CONFIG_PATH, load_chat_aliases, resolve_chat_reference
+from follow_telegram_leading.parser import parse_reading_signal, parse_reading_signal_with_llm
+from follow_telegram_leading.store import ReadingStore
+from follow_telegram_leading.trader import DanteTrader
 
 
 @dataclass
@@ -51,7 +51,7 @@ class DanteReadingOrchestrator:
         self.trader = DanteTrader(notifier=self.notifier, is_mock=is_mock)
         self.use_llm = use_llm
         self.chat_aliases = load_chat_aliases()
-        self.logs_dir = CURRENT_DIR.parents[2] / "logs" / "follow_dante_reading"
+        self.logs_dir = CURRENT_DIR.parents[2] / "logs" / "follow_telegram_leading"
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         self.strategy_sessions: dict[int, dict] = {}
         self._configure_logging()
@@ -378,7 +378,7 @@ class DanteReadingOrchestrator:
             stop_loss = f"{signal.stop_loss_pct * 100:.1f}%"
 
         return (
-            f"📨 *Dante Reading Signal*\n"
+            f"📨 *{signal.strategy_name or 'telegram_stock_leading'} Signal*\n"
             f"• 종목: {company}\n"
             f"• 액션: {signal.action}\n"
             f"• 스타일: {signal.trade_style}\n"
@@ -493,7 +493,8 @@ class DanteReadingOrchestrator:
                     "💡 **매매 승인 프로세스**\n"
                     "기본 전략에서는 텔레그램 신호 포착 시 승인 요청 메시지가 발송됩니다.\n"
                     "해당 메시지에 `buy`, `sell`, `skip` 또는 `y`, `네` 등으로 답장하면 실제/모의 매매가 집행됩니다.\n"
-                    "`DANTE_SIGNAL_STRATEGY=llm_autonomous` 설정 시 신뢰도 기준을 통과한 LLM 판단은 승인 없이 집행됩니다."
+                    "`DANTE_SIGNAL_STRATEGY=llm_autonomous` 설정 시 신뢰도 기준을 통과한 LLM 판단은 승인 없이 집행됩니다.\n"
+                    "텔레그램 신호는 `cafe_share`, `chart_master_kospi`처럼 채널별 전략명으로 기록됩니다."
                 )
                 await message.channel.send(help_text)
 

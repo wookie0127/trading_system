@@ -11,7 +11,7 @@ import FinanceDataReader as fdr
 from loguru import logger
 from pykrx import stock as pykrx_stock
 
-from follow_dante_reading.store import ReadingStore
+from follow_telegram_leading.store import ReadingStore
 
 MARKET_TIMEZONE = ZoneInfo("Asia/Seoul")
 
@@ -219,6 +219,7 @@ def _build_compact_records(
             {
                 "chat_id": _first_present(message, signal, latest_decision, "chat_id"),
                 "chat_title": _first_present(message, signal, latest_decision, "chat_title"),
+                "strategy_name": _first_present(signal, latest_decision, "strategy_name"),
                 "message_id": _first_present(message, signal, latest_decision, "message_id"),
                 "posted_at": _first_present(message, signal, latest_decision, "posted_at"),
                 "company": _first_present_key((signal, latest_decision), ("company_name", "company")),
@@ -260,14 +261,15 @@ def _render_markdown(payload: dict) -> str:
         "",
         "## Decision Timeline",
         "",
-        "| 시간 | 방 | 종목 | 액션 | 전략 | 신뢰도 | 판단 | 사유 | 요약 |",
-        "|---|---|---|---|---|---:|---|---|---|",
+        "| 시간 | 방 | 채널전략 | 종목 | 액션 | 스타일 | 신뢰도 | 판단 | 사유 | 요약 |",
+        "|---|---|---|---|---|---|---:|---|---|---|",
     ]
     for record in payload["records"]:
         lines.append(
             "| "
             f"{_hhmm(record.get('posted_at'))} | "
             f"{_md(record.get('chat_title') or record.get('chat_id') or '-')} | "
+            f"{_md(record.get('strategy_name') or '-')} | "
             f"{_md(record.get('company') or '-')} | "
             f"{_md(record.get('action') or '-')} | "
             f"{_md(record.get('trade_style') or '-')} | "

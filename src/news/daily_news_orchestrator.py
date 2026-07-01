@@ -1,7 +1,12 @@
+import arrow
 import asyncio
 import email.utils
 import os
+import shlex
+import shutil
+import subprocess
 import sys
+import yaml
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime
@@ -13,31 +18,45 @@ import yaml
 from dotenv import load_dotenv
 from prefect import flow, get_run_logger, task
 
+
+def read_yaml(yaml_path: str) -> dict:
+    with open(yaml_path, "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+        return config
+
+
 CURRENT_DIR = Path(__file__).resolve().parent
 SRC_DIR = CURRENT_DIR.parents[1]
 if str(SRC_DIR) not in sys.path:
     sys.path.append(str(SRC_DIR))
+
+# 환경 설정 로드
+KEY_PATH = Path.home() / ".ssh" / "kis"
+load_dotenv(str(KEY_PATH))
+load_dotenv(str(SRC_DIR / ".env"))
 
 DEFAULT_FEEDS = [
     "https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko",
     "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=ko&gl=KR&ceid=KR:ko",
     "https://news.google.com/rss/headlines/section/topic/WORLD?hl=ko&gl=KR&ceid=KR:ko",
 ]
-DEFAULT_MODEL = "gpt-5-mini"
+DEFAULT_BACKEND = "openai"
+DEFAULT_OPENAI_MODEL = "gpt-5-mini"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_CODEX_MODEL = ""
+DEFAULT_GEMINI_COMMAND = "gemini"
+DEFAULT_CODEX_COMMAND = "codex"
+DEFAULT_APPROVAL_MODE = "yolo"
+DEFAULT_TIMEOUT_SECONDS = 180
 DEFAULT_OUTPUT_DIR = Path("data/news_summaries")
+DEFAULT_OBSIDIAN_SUBDIR = "뉴스요약"
 DEFAULT_MAX_ITEMS = 20
 DEFAULT_NEWS_TIMEZONE = "Asia/Seoul"
 
-KEY_PATH = Path.home() / ".ssh" / "kis"
-load_dotenv(KEY_PATH)
-load_dotenv()
+NEWS_CONFIG_PATH = SRC_DIR / "config.yaml"
+NEWS_CONFIGS = read_yaml(str(NEWS_CONFIG_PATH)) if NEWS_CONFIG_PATH.exists() else {}
 
-CONFIG_PATH = SRC_DIR / "config.yaml"
-if CONFIG_PATH.exists():
-    with open(CONFIG_PATH, "r", encoding="utf-8") as config_file:
-        config = yaml.safe_load(config_file) or {}
-        for key, value in config.items():
-            os.environ.setdefault(key, str(value))
+KOREAN_WEEKDAYS = ["월", "화", "수", "목", "금", "토", "일"]
 
 
 @dataclass
@@ -48,6 +67,10 @@ class FeedItem:
     source: str
 
 
+def _news_timezone() -> ZoneInfo:
+    return ZoneInfo(os.getenv("NEWS_TIMEZONE", DEFAULT_NEWS_TIMEZONE))
+
+
 def _env_list(name: str, default: list[str]) -> list[str]:
     raw = os.getenv(name, "").strip()
     if not raw:
@@ -55,8 +78,17 @@ def _env_list(name: str, default: list[str]) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
-def _news_timezone() -> ZoneInfo:
-    return ZoneInfo(os.getenv("NEWS_TIMEZONE", DEFAULT_NEWS_TIMEZONE))
+def _config_list(name: str, default: list[str]) -> list[str]:
+    value = NEWS_CONFIGS.get(name)
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str) and value.strip():
+        return [item.strip() for item in value.split(",") if item.strip()]
+    return _env_list(name, default)
+
+
+def _config_value(name: str, default: str | int | None = None):
+    return NEWS_CONFIGS.get(name, os.getenv(name, default))
 
 
 def _current_news_datetime() -> datetime:
@@ -122,6 +154,9 @@ async def fetch_feed_items(feed_url: str) -> list[FeedItem]:
     return items
 
 
+# ==========================================
+# 1. OpenAI 백엔드 요약 기능
+# ==========================================
 async def summarize_with_openai(model: str, prompt: str) -> str:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -157,7 +192,117 @@ async def summarize_with_openai(model: str, prompt: str) -> str:
     return summary
 
 
-def render_prompt(items: list[FeedItem], run_date: str) -> str:
+# ==========================================
+# 2. Gemini CLI 백엔드 요약 기능
+# ==========================================
+def run_gemini_cli(prompt: str, command: str, model: str, approval_mode: str, timeout_seconds: int) -> str:
+    command_parts = shlex.split(command)
+    executable = command_parts[0]
+    if shutil.which(executable) is None and not Path(executable).exists():
+        raise RuntimeError(f"Gemini CLI executable not found: {executable}")
+
+    cli_args = command_parts + [
+        "--prompt",
+        prompt,
+        "--output-format",
+        "text",
+        "--approval-mode",
+        approval_mode,
+    ]
+    if model:
+        cli_args.extend(["--model", model])
+
+    gemini_home = Path.home() / ".gemini"
+    run_cwd = gemini_home if gemini_home.exists() else Path.cwd()
+
+    completed = subprocess.run(
+        cli_args,
+        capture_output=True,
+        text=True,
+        timeout=timeout_seconds,
+        check=False,
+        cwd=run_cwd,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "Gemini CLI failed with exit status "
+            f"{completed.returncode}: {completed.stderr.strip() or completed.stdout.strip()}"
+        )
+
+    output = completed.stdout.strip()
+    if not output:
+        raise RuntimeError("Gemini CLI returned empty output")
+    return output
+
+
+# ==========================================
+# 3. Codex CLI 백엔드 요약 기능
+# ==========================================
+def run_codex_cli(prompt: str, command: str, model: str, timeout_seconds: int) -> str:
+    command_parts = shlex.split(command)
+    executable = command_parts[0]
+    if shutil.which(executable) is None and not Path(executable).exists():
+        raise RuntimeError(f"Codex CLI executable not found: {executable}")
+
+    # --ask-for-approval is a global option and must precede the 'exec' subcommand
+    cli_args = [
+        executable,
+        "--ask-for-approval",
+        "never",
+    ]
+    if len(command_parts) > 1:
+        cli_args.extend(command_parts[1:])
+
+    cli_args.extend([
+        "exec",
+        "--sandbox",
+        "read-only",
+    ])
+    if model:
+        cli_args.extend(["--model", model])
+    cli_args.append("-")
+
+    completed = subprocess.run(
+        cli_args,
+        input=prompt,
+        capture_output=True,
+        text=True,
+        timeout=timeout_seconds,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "Codex CLI failed with exit status "
+            f"{completed.returncode}: {completed.stderr.strip() or completed.stdout.strip()}"
+        )
+
+    output = completed.stdout.strip()
+    if not output:
+        raise RuntimeError("Codex CLI returned empty output")
+    return output
+
+
+# ==========================================
+# 프롬프트 렌더링 템플릿 정의
+# ==========================================
+def output_frame_template(run_date: str) -> str:
+    return (
+        f"# 📊 {run_date} (요일) 오늘의 뉴스 요약\n\n"
+        "## 🌍 국제 및 외교\n"
+        "* **주요 이슈 1:** 내용\n"
+        "* **주요 이슈 2:** 내용\n\n"
+        "## 🇰🇷 국내 정치 및 사회\n"
+        "* **주요 이슈 1:** 내용\n"
+        "* **주요 이슈 2:** 내용\n\n"
+        "## 📈 경제 및 금융\n"
+        "* **주요 이슈 1:** 내용\n"
+        "* **주요 이슈 2:** 내용\n\n"
+        "## 🌦️ 날씨 및 기타\n"
+        "* **날씨 또는 기타:** 내용\n"
+    )
+
+
+def render_prompt(items: list[FeedItem], run_date: str, style: str = "default") -> str:
     lines = []
     for index, item in enumerate(items, start=1):
         lines.append(
@@ -165,8 +310,33 @@ def render_prompt(items: list[FeedItem], run_date: str) -> str:
             f"   - published_at: {item.published_at or 'unknown'}\n"
             f"   - link: {item.link}"
         )
-
     headline_block = "\n".join(lines)
+
+    if style == "compact":
+        return (
+            "뉴스요약해줘.\n\n"
+            f"기준일: {run_date}\n"
+            "역할: 한국어 아침 뉴스 브리핑 작성자\n"
+            "입력은 RSS 헤드라인 목록뿐이다. 제공된 헤드라인 밖의 사실을 추가하지 말고, "
+            "불확실하면 '헤드라인 기준 추정'이라고 명시하라.\n"
+            "반드시 Markdown 본문만 출력하고 코드블록, YAML frontmatter, 메타데이터 섹션, "
+            "원문 링크 목록, 체크포인트 섹션은 넣지 말라.\n"
+            "아래 템플릿의 프레임만 그대로 따르고, 각 항목 내용만 채워라.\n"
+            "출력 템플릿:\n"
+            f"{output_frame_template(run_date)}\n"
+            "규칙:\n"
+            "- 각 항목은 `* **제목:** 내용` 형식으로 작성\n"
+            "- 제목 1줄, 섹션 4개, 마지막 구분선과 생성 문구를 제외한 다른 블록은 만들지 말 것\n"
+            "- 국제 및 외교: 2~4개 bullet\n"
+            "- 국내 정치 및 사회: 2~4개 bullet\n"
+            "- 경제 및 금융: 2~4개 bullet\n"
+            "- 날씨 및 기타: 정확히 1개 bullet\n"
+            "- 헤드라인을 묶어 자연스럽게 요약하되 과장하지 말 것\n"
+            "- 날짜 제목의 요일은 한국어 한 글자 요일로 쓸 것\n\n"
+            f"뉴스 목록:\n{headline_block}\n"
+        )
+
+    # default style
     return (
         f"기준일: {run_date}\n"
         "아래 뉴스 헤드라인만 근거로 한국어 아침 브리핑을 작성하라.\n"
@@ -191,26 +361,52 @@ def render_prompt(items: list[FeedItem], run_date: str) -> str:
     )
 
 
+# ==========================================
+# 4. 저장 레이어 정의 (Local & Obsidian)
+# ==========================================
 def build_archive_markdown(
     run_date: str,
     generated_at: str,
     model: str,
     feeds: list[str],
     summary_body: str,
+    backend: str,
 ) -> str:
     feed_lines = "\n".join(f"- {feed}" for feed in feeds)
     return (
         f"<!-- generated_at: {generated_at} -->\n"
         f"<!-- model: {model} -->\n"
-        "<!-- source_type: rss-headlines -->\n\n"
+        f"<!-- backend: {backend} -->\n"
+        f"<!-- source_type: rss-headlines -->\n\n"
         f"{summary_body.strip()}\n\n"
         "## 생성 정보\n"
         f"- 기준일: {run_date}\n"
         f"- 생성시각: {generated_at}\n"
-        f"- 모델: `{model}`\n"
+        f"- 백엔드: `{backend}` (모델: `{model}`)\n"
         "- 입력 소스:\n"
         f"{feed_lines}\n"
     )
+
+
+def build_obsidian_markdown(
+    run_date: str,
+    summary_body: str,
+    backend: str,
+) -> str:
+    weekday = KOREAN_WEEKDAYS[datetime.fromisoformat(run_date).weekday()]
+    normalized = summary_body.strip()
+    expected_title_prefix = f"# 📊 {run_date} ({weekday}) 오늘의 뉴스 요약"
+
+    if normalized.startswith("# "):
+        lines = normalized.splitlines()
+        lines[0] = expected_title_prefix
+        normalized = "\n".join(lines).strip()
+    else:
+        normalized = f"{expected_title_prefix}\n\n{normalized}"
+
+    generated_at = _current_news_datetime().isoformat(timespec="seconds")
+    timezone_label = getattr(_news_timezone(), "key", str(_news_timezone()))
+    return f"{normalized}\n\n---\n*Generated by {backend} at {generated_at} ({timezone_label})*\n"
 
 
 @task(name="Fetch News Headlines", retries=2, retry_delay_seconds=30)
@@ -240,60 +436,173 @@ async def fetch_news_task(feed_urls: list[str], max_items: int) -> list[FeedItem
     return limited
 
 
-@task(name="Summarize News", retries=2, retry_delay_seconds=60)
-async def summarize_news_task(items: list[FeedItem], model: str, run_date: str) -> str:
+@task(name="Summarize News Multi-Backend", retries=2, retry_delay_seconds=60)
+async def summarize_news_task(
+    items: list[FeedItem],
+    backend: str,
+    model: str,
+    run_date: str,
+    style: str,
+    gemini_command: str,
+    codex_command: str,
+    approval_mode: str,
+    timeout_seconds: int,
+) -> str:
     logger = get_run_logger()
     if not items:
         raise RuntimeError("No news items were collected from RSS feeds")
 
-    prompt = render_prompt(items, run_date)
-    logger.info(f"Sending {len(items)} headlines to OpenAI model {model}")
-    return await summarize_with_openai(model=model, prompt=prompt)
+    prompt = render_prompt(items, run_date, style=style)
+    logger.info(f"Sending {len(items)} headlines to {backend} (model={model or 'default'})")
+
+    if backend == "openai":
+        return await summarize_with_openai(model=model, prompt=prompt)
+    elif backend == "gemini":
+        return run_gemini_cli(
+            prompt=prompt,
+            command=gemini_command,
+            model=model,
+            approval_mode=approval_mode,
+            timeout_seconds=timeout_seconds,
+        )
+    elif backend == "codex":
+        return run_codex_cli(
+            prompt=prompt,
+            command=codex_command,
+            model=model,
+            timeout_seconds=timeout_seconds,
+        )
+    else:
+        raise ValueError(f"Unsupported LLM backend: {backend}")
 
 
-@task(name="Persist Markdown Summary")
-def persist_summary_task(markdown_text: str, output_dir: str, run_date: str, model: str, feeds: list[str]) -> str:
+@task(name="Persist Summary (Local & Obsidian)")
+def persist_summary_task(
+    markdown_text: str,
+    output_dir: str,
+    obsidian_root: str | None,
+    obsidian_subdir: str,
+    run_date: str,
+    backend: str,
+    model: str,
+    feeds: list[str],
+) -> str:
     logger = get_run_logger()
+    generated_at = _current_news_datetime().isoformat(timespec="seconds")
+
+    # 1. Obsidian Vault로 저장
+    if obsidian_root:
+        root = Path(obsidian_root)
+        if not root.is_absolute():
+            root = Path.cwd() / root
+        target_dir = root / obsidian_subdir
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        full_markdown = build_obsidian_markdown(
+            run_date=run_date,
+            summary_body=markdown_text,
+            backend=backend,
+        )
+        target_path = target_dir / f"{run_date}.md"
+        target_path.write_text(full_markdown, encoding="utf-8")
+        logger.info(f"Saved Obsidian markdown briefing to {target_path}")
+        return str(target_path)
+
+    # 2. 로컬 일반 아카이브 저장
     target_dir = Path(output_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    generated_at = _current_news_datetime().isoformat(timespec="seconds")
     full_markdown = build_archive_markdown(
         run_date=run_date,
         generated_at=generated_at,
         model=model,
         feeds=feeds,
         summary_body=markdown_text,
+        backend=backend,
     )
-
     target_path = target_dir / f"{run_date}.md"
     target_path.write_text(full_markdown, encoding="utf-8")
-    logger.info(f"Saved markdown briefing to {target_path}")
+    logger.info(f"Saved archive markdown briefing to {target_path}")
     return str(target_path)
 
 
 @flow(name="Daily-News-Summary-Flow")
 async def daily_news_summary_flow(
     feed_urls: list[str] | None = None,
+    backend: str | None = None,
     model: str | None = None,
     output_dir: str | None = None,
+    obsidian_root: str | None = None,
+    obsidian_subdir: str | None = None,
     max_items: int | None = None,
+    prompt_style: str | None = None,
+    gemini_command: str | None = None,
+    codex_command: str | None = None,
+    approval_mode: str | None = None,
+    timeout_seconds: int | None = None,
 ):
     logger = get_run_logger()
-    resolved_feeds = feed_urls or _env_list("NEWS_RSS_FEEDS", DEFAULT_FEEDS)
-    resolved_model = model or os.getenv("OPENAI_MODEL", DEFAULT_MODEL)
-    resolved_output_dir = output_dir or os.getenv("NEWS_SUMMARY_DIR", str(DEFAULT_OUTPUT_DIR))
-    resolved_max_items = max_items or int(os.getenv("NEWS_MAX_ITEMS", str(DEFAULT_MAX_ITEMS)))
-    run_date = _current_news_datetime().date().isoformat()
+    resolved_backend = (backend or str(_config_value("NEWS_LLM_BACKEND", DEFAULT_BACKEND))).strip().lower()
+    resolved_feeds = feed_urls or _config_list("NEWS_RSS_FEEDS", DEFAULT_FEEDS)
+    resolved_output_dir = output_dir or str(_config_value("NEWS_SUMMARY_DIR", DEFAULT_OUTPUT_DIR))
+    summary_setting = NEWS_CONFIGS.get("NEWS_SUMMARY_SETTING") or {}
+    resolved_obsidian_root = obsidian_root or os.getenv("OBSIDIAN_VAULT_DIR") or summary_setting.get("ROOT")
+    resolved_obsidian_subdir = (
+        obsidian_subdir
+        or os.getenv("NEWS_OBSIDIAN_SUBDIR")
+        or summary_setting.get("SUBDIR")
+        or DEFAULT_OBSIDIAN_SUBDIR
+    )
+    resolved_max_items = max_items or int(_config_value("NEWS_MAX_ITEMS", DEFAULT_MAX_ITEMS))
+    resolved_style = prompt_style or str(
+        _config_value("NEWS_PROMPT_STYLE", "default" if resolved_backend == "openai" else "compact")
+    )
+
+    if resolved_backend == "openai":
+        resolved_model = model or str(_config_value("OPENAI_MODEL", DEFAULT_OPENAI_MODEL))
+    elif resolved_backend == "gemini":
+        resolved_model = model or str(_config_value("GEMINI_MODEL", DEFAULT_GEMINI_MODEL))
+    elif resolved_backend == "codex":
+        resolved_model = model or str(_config_value("CODEX_MODEL", DEFAULT_CODEX_MODEL))
+    else:
+        resolved_model = model or ""
+
+    resolved_gemini_cmd = gemini_command or str(_config_value("GEMINI_CLI_COMMAND", DEFAULT_GEMINI_COMMAND))
+    resolved_codex_cmd = codex_command or str(_config_value("CODEX_CLI_COMMAND", DEFAULT_CODEX_COMMAND))
+    resolved_approval_mode = approval_mode or str(_config_value("GEMINI_APPROVAL_MODE", DEFAULT_APPROVAL_MODE))
+    resolved_timeout = timeout_seconds or int(_config_value("TIMEOUT_SECONDS", _config_value("GEMINI_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)))
+
+    run_date = arrow.now(tz=_news_timezone().key).format("YYYY-MM-DD")
 
     logger.info(
-        "Starting daily news summary flow "
-        f"(feeds={len(resolved_feeds)}, model={resolved_model}, max_items={resolved_max_items})"
+        "Starting Daily News Summary Flow "
+        f"(backend={resolved_backend}, model={resolved_model or 'default'}, "
+        f"style={resolved_style}, feeds={len(resolved_feeds)}, max_items={resolved_max_items})"
     )
 
     items = await fetch_news_task(resolved_feeds, resolved_max_items)
-    summary = await summarize_news_task(items, resolved_model, run_date)
-    return persist_summary_task(summary, resolved_output_dir, run_date, resolved_model, resolved_feeds)
+    summary = await summarize_news_task(
+        items=items,
+        backend=resolved_backend,
+        model=resolved_model,
+        run_date=run_date,
+        style=resolved_style,
+        gemini_command=resolved_gemini_cmd,
+        codex_command=resolved_codex_cmd,
+        approval_mode=resolved_approval_mode,
+        timeout_seconds=resolved_timeout,
+    )
+
+    return persist_summary_task(
+        markdown_text=summary,
+        output_dir=resolved_output_dir,
+        obsidian_root=resolved_obsidian_root,
+        obsidian_subdir=resolved_obsidian_subdir,
+        run_date=run_date,
+        backend=resolved_backend,
+        model=resolved_model,
+        feeds=resolved_feeds,
+    )
 
 
 if __name__ == "__main__":

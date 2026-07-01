@@ -55,6 +55,7 @@ class ReadingSignal:
     raw_text: str
     trade_style: str = "unknown"
     media_path: str | None = None
+    strategy_name: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)

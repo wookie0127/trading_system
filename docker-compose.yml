@@ -122,15 +122,19 @@ services:
     command: python runners/intraday_collector_daemon.py
     working_dir: /app/src
 
-  dante-bot:
+  trading-bot:
     build: .
-    container_name: dante-bot
+    container_name: trading-bot
     restart: unless-stopped
     environment:
       - PYTHONPATH=/app/src
       - PYTHONUNBUFFERED=1
       - GEMINI_CLI_TRUST_WORKSPACE=true
+      - DANTE_LLM_BACKEND=codex
       - DANTE_SIGNAL_STRATEGY=llm_autonomous
+      - DANTE_KOSPI_FUTURES_MODE=tracking
+      - DANTE_KOSPI_FUTURES_TRACK_ONLY=true
+      - DANTE_KOSPI_FUTURES_CHANNEL_ID=1521633631976820746
       - DANTE_OBSIDIAN_DIARY_DIR=/app/obsidian/invest_diary
     env_file:
       - path: .env
@@ -142,8 +146,9 @@ services:
       - ./config.yaml:/app/config.yaml:ro
       - ${HOME}/.ssh:/root/.ssh:ro
       - ${HOME}/.gemini:/root/.gemini
+      - ${HOME}/.codex:/root/.codex
       - "${HOME}/Documents/Obsidian Vault/TradingSystem:/app/obsidian"
-    command: python src/follow_dante_reading/orchestrator.py serve --chat cafe_share,chart_master_kospi --notify --use_llm
+    command: python src/follow_telegram_leading/orchestrator.py serve --chat cafe_share,chart_master_kospi --notify --use_llm
     working_dir: /app
 
 volumes:

@@ -1,12 +1,12 @@
 import json
 from pathlib import Path
 
-from follow_dante_reading.signal_schema import ReadingMessage, ReadingSignal, project_root
+from follow_telegram_leading.signal_schema import ReadingMessage, ReadingSignal, project_root
 
 
 class ReadingStore:
     def __init__(self, base_dir: str | Path | None = None):
-        root = Path(base_dir) if base_dir else project_root() / "data" / "follow_dante_reading"
+        root = Path(base_dir) if base_dir else project_root() / "data" / "follow_telegram_leading"
         self.base_dir = root
         self.attachments_dir = root / "attachments"
         self.messages_path = root / "telegram_messages.jsonl"

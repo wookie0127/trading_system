@@ -1,4 +1,4 @@
-from follow_dante_reading.orchestrator import DanteReadingOrchestrator
+from follow_telegram_leading.orchestrator import DanteReadingOrchestrator
 
 
 def test_resolve_chat_list_supports_comma_separated_aliases():

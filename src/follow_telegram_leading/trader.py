@@ -3,6 +3,7 @@ import anyio.abc
 import json
 import math
 import os
+import re
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -12,21 +13,25 @@ from tenacity import AsyncRetrying, wait_exponential, stop_after_attempt, retry_
 
 from core.kis_market_handler import MarketHandler
 from bots.notifier import Notifier
-from follow_dante_reading.client import get_discord_input
-from follow_dante_reading.signal_schema import ReadingSignal, project_root
+from follow_telegram_leading.client import get_discord_input
+from follow_telegram_leading.signal_schema import ReadingSignal, project_root
+
+
+FUTURES_QUANTITY_PATTERN = re.compile(r"(\d+)\s*계약")
 
 
 class DanteTrader:
     def __init__(self, notifier: Notifier | None = None, is_mock: bool = False):
         self.market_handler = MarketHandler()
         self.notifier = notifier or Notifier()
-        self.active_trades_path = project_root() / "data" / "follow_dante_reading" / "active_trades.json"
-        self.trade_history_path = project_root() / "data" / "follow_dante_reading" / "trade_history.json"
-        self.trade_tracking_path = project_root() / "data" / "follow_dante_reading" / "trade_price_tracking.json"
-        self.scheduled_orders_path = project_root() / "data" / "follow_dante_reading" / "scheduled_orders.json"
-        self.autonomous_state_path = project_root() / "data" / "follow_dante_reading" / "autonomous_strategy_state.json"
-        self.investment_journal_path = project_root() / "data" / "follow_dante_reading" / "investment_journal.jsonl"
-        self.daily_reviews_path = project_root() / "data" / "follow_dante_reading" / "daily_reviews.json"
+        self.active_trades_path = project_root() / "data" / "follow_telegram_leading" / "active_trades.json"
+        self.trade_history_path = project_root() / "data" / "follow_telegram_leading" / "trade_history.json"
+        self.trade_tracking_path = project_root() / "data" / "follow_telegram_leading" / "trade_price_tracking.json"
+        self.scheduled_orders_path = project_root() / "data" / "follow_telegram_leading" / "scheduled_orders.json"
+        self.autonomous_state_path = project_root() / "data" / "follow_telegram_leading" / "autonomous_strategy_state.json"
+        self.kospi_futures_state_path = project_root() / "data" / "follow_telegram_leading" / "kospi_futures_state.json"
+        self.investment_journal_path = project_root() / "data" / "follow_telegram_leading" / "investment_journal.jsonl"
+        self.daily_reviews_path = project_root() / "data" / "follow_telegram_leading" / "daily_reviews.json"
         self.obsidian_diary_dir = Path(
             os.getenv(
                 "DANTE_OBSIDIAN_DIARY_DIR",
@@ -64,6 +69,16 @@ class DanteTrader:
         self.llm_auto_symbol_cooldown_minutes = int(os.getenv("DANTE_LLM_AUTO_SYMBOL_COOLDOWN_MINUTES", "60"))
         self.daily_review_poll_seconds = int(os.getenv("DANTE_DAILY_REVIEW_POLL_SECONDS", "300"))
         self.daily_review_time = self._parse_hhmm(os.getenv("DANTE_DAILY_REVIEW_TIME", "15:45"))
+        self.kospi_futures_contract_code = os.getenv("DANTE_KOSPI_FUTURES_CONTRACT_CODE", "101W09").strip()
+        self.kospi_futures_market_cls_code = os.getenv("DANTE_KOSPI_FUTURES_MARKET_CLS_CODE", "MKI").strip()
+        self.kospi_futures_daily_budget_krw = int(os.getenv("DANTE_KOSPI_FUTURES_DAILY_BUDGET_KRW", "1000000"))
+        self.kospi_futures_contract_budget_krw = int(
+            os.getenv("DANTE_KOSPI_FUTURES_CONTRACT_BUDGET_KRW", str(self.kospi_futures_daily_budget_krw))
+        )
+        self.kospi_futures_default_quantity = int(os.getenv("DANTE_KOSPI_FUTURES_DEFAULT_QUANTITY", "1"))
+        self.kospi_futures_mode = self._resolve_kospi_futures_mode()
+        self.kospi_futures_track_only = self.kospi_futures_mode == "tracking"
+        self._validate_kospi_futures_mode()
         if self.is_mock:
             logger.info("DanteTrader initialized in MOCK MODE (No real trades)")
         logger.info(
@@ -90,9 +105,54 @@ class DanteTrader:
             f"llm_auto_max_active_positions={self.llm_auto_max_active_positions}, "
             f"llm_auto_symbol_cooldown_minutes={self.llm_auto_symbol_cooldown_minutes}, "
             f"daily_review_time={self.daily_review_time.strftime('%H:%M')}, "
+            f"kospi_futures_contract_code={self.kospi_futures_contract_code}, "
+            f"kospi_futures_market_cls_code={self.kospi_futures_market_cls_code}, "
+            f"kospi_futures_daily_budget_krw={self.kospi_futures_daily_budget_krw}, "
+            f"kospi_futures_contract_budget_krw={self.kospi_futures_contract_budget_krw}, "
+            f"kospi_futures_mode={self.kospi_futures_mode}, "
+            f"kospi_futures_track_only={self.kospi_futures_track_only}, "
             f"obsidian_diary_dir={self.obsidian_diary_dir}, "
             f"is_mock={self.is_mock}"
         )
+
+    def _resolve_kospi_futures_mode(self) -> str:
+        raw_mode = os.getenv("DANTE_KOSPI_FUTURES_MODE", "").strip().lower()
+        if not raw_mode:
+            legacy_track_only = os.getenv("DANTE_KOSPI_FUTURES_TRACK_ONLY", "false").strip().lower()
+            return "tracking" if legacy_track_only == "true" else "paper"
+
+        aliases = {
+            "track": "tracking",
+            "tracking-only": "tracking",
+            "track_only": "tracking",
+            "paper-tracking": "tracking",
+            "mock": "paper",
+            "simulation": "paper",
+            "demo": "paper",
+            "real": "live",
+            "production": "live",
+        }
+        mode = aliases.get(raw_mode, raw_mode)
+        if mode not in {"tracking", "paper", "live"}:
+            raise ValueError(
+                "DANTE_KOSPI_FUTURES_MODE must be one of tracking, paper, live "
+                f"(got {raw_mode!r})"
+            )
+        return mode
+
+    def _validate_kospi_futures_mode(self) -> None:
+        if self.kospi_futures_mode == "tracking":
+            return
+
+        if self.kospi_futures_mode == "paper" and not self.market_handler.is_simulation:
+            raise ValueError(
+                "DANTE_KOSPI_FUTURES_MODE=paper requires KIS_PROFILE=paper or KIS_SIMULATION=true"
+            )
+
+        if self.kospi_futures_mode == "live" and self.market_handler.is_simulation:
+            raise ValueError(
+                "DANTE_KOSPI_FUTURES_MODE=live requires KIS_PROFILE=live and KIS_SIMULATION=false"
+            )
 
     async def handle_signal(self, signal: ReadingSignal, tg: anyio.abc.TaskGroup | None = None):
         """매매 신호를 처리하고 필요 시 Discord 컨펌을 요청합니다."""
@@ -103,6 +163,10 @@ class DanteTrader:
         # 2. 매매 액션 처리
         if signal.action == "ignore":
             self._record_investment_journal(signal, code=None, decision="ignored", reason="action_ignore")
+            return
+
+        if signal.strategy_name == "chart_master_kospi":
+            await self._handle_chart_master_kospi_signal(signal)
             return
 
         company = signal.company_name
@@ -294,6 +358,316 @@ class DanteTrader:
                     await self.notifier.notify_all(fail_msg)
         else:
             await self.notifier.notify_all(f"🚫 {company} 매도를 거절하셨습니다.")
+
+    async def _handle_chart_master_kospi_signal(self, signal: ReadingSignal) -> None:
+        action = signal.action
+        if action not in {"buy_candidate", "sell"}:
+            self._record_investment_journal(signal, code=self.kospi_futures_contract_code, decision="skipped", reason="non_actionable_futures_signal")
+            return
+
+        requested_qty = self._extract_futures_quantity(signal.rationale_text) or self.kospi_futures_default_quantity
+        if requested_qty <= 0:
+            requested_qty = self.kospi_futures_default_quantity
+
+        state = self._load_kospi_futures_state()
+        open_quantity = int(state.get("open_quantity", 0))
+        if self.kospi_futures_track_only:
+            await self._track_chart_master_kospi_paper_position(
+                signal,
+                state=state,
+                requested_qty=requested_qty,
+                open_quantity=open_quantity,
+            )
+            return
+
+        if action == "buy_candidate":
+            blocked_reason = state.get("buy_blocked_reason")
+            blocked_date = state.get("buy_blocked_date")
+            if blocked_reason and blocked_date == self._today_market_date():
+                await self.notifier.notify_kospi_futures(
+                    "⚠️ **[KOSPI Futures Buy Blocked]** "
+                    f"{self.kospi_futures_contract_code} 신규 진입이 차단되어 있습니다: {blocked_reason}"
+                )
+                self._record_investment_journal(
+                    signal,
+                    code=self.kospi_futures_contract_code,
+                    decision="skipped",
+                    reason="futures_buy_blocked_for_day",
+                )
+                return
+
+            budget_remaining = max(self.kospi_futures_daily_budget_krw - (open_quantity * self.kospi_futures_contract_budget_krw), 0)
+            max_allowed_qty = budget_remaining // self.kospi_futures_contract_budget_krw if self.kospi_futures_contract_budget_krw > 0 else 0
+            buy_quantity = min(requested_qty, max_allowed_qty)
+            if buy_quantity <= 0:
+                await self.notifier.notify_kospi_futures(
+                    "⚠️ **[KOSPI Futures Budget]** "
+                    f"{self.kospi_futures_contract_code} 신규 진입 불가: 예산 {self.kospi_futures_daily_budget_krw:,}원 내에서 "
+                    f"가용 수량이 없습니다."
+                )
+                self._record_investment_journal(
+                    signal,
+                    code=self.kospi_futures_contract_code,
+                    decision="skipped",
+                    reason="futures_budget_exhausted",
+                )
+                return
+
+            price = self.market_handler.fetch_domestic_future_price(
+                self.kospi_futures_contract_code,
+                market_cls_code=self.kospi_futures_market_cls_code,
+            )
+            res = self.market_handler.create_futureoption_buy_order(
+                self.kospi_futures_contract_code,
+                buy_quantity,
+                account_product_code="03",
+            )
+            if res.get("rt_cd") != "0":
+                fail_reason = str(res.get("msg1") or res.get("msg_cd") or "unknown_error")
+                fail_msg = f"❌ **[KOSPI Futures Buy Fail]** {self.kospi_futures_contract_code} {buy_quantity}계약 진입 실패: {fail_reason}"
+                await self.notifier.notify_kospi_futures(fail_msg)
+                if self._is_futures_insufficient_orderable_amount(res):
+                    broker_budget_msg = (
+                        "브로커 응답 기준 모의/실계좌 주문가능금액이 계약 증거금보다 부족합니다. "
+                        f"현재 전략 내부 계약예산은 {self.kospi_futures_contract_budget_krw:,}원으로 설정되어 있으므로, "
+                        "실제 선물 증거금 수준에 맞게 `DANTE_KOSPI_FUTURES_CONTRACT_BUDGET_KRW`를 상향하거나 "
+                        "더 작은 계약 종목으로 변경해야 합니다."
+                    )
+                    self._save_kospi_futures_state(
+                        {
+                            "buy_blocked_date": self._today_market_date(),
+                            "buy_blocked_reason": fail_reason,
+                            "last_action": "buy_rejected",
+                            "last_updated": self._now_market_tz().isoformat(),
+                        }
+                    )
+                    await self.notifier.notify_kospi_futures(
+                        "⚠️ **[KOSPI Futures Budget Mismatch]** "
+                        f"{broker_budget_msg} ({self.kospi_futures_contract_code})"
+                    )
+                self._record_investment_journal(
+                    signal,
+                    code=self.kospi_futures_contract_code,
+                    decision="futures_buy_failed",
+                    reason=fail_reason,
+                )
+                return
+
+            executed_price = price or self._extract_price(res)
+            self._save_kospi_futures_state(
+                {
+                    "open_quantity": open_quantity + buy_quantity,
+                    "buy_blocked_date": None,
+                    "buy_blocked_reason": None,
+                    "last_action": "buy",
+                    "last_price": executed_price,
+                    "last_updated": self._now_market_tz().isoformat(),
+                }
+            )
+            await self.notifier.notify_kospi_futures(
+                "✅ **[KOSPI Futures Buy]** "
+                f"{self.kospi_futures_contract_code} {buy_quantity}계약 진입 완료 "
+                f"(체결가: {executed_price:,}원, 예산 {self.kospi_futures_daily_budget_krw:,}원)"
+            )
+            self._record_investment_journal(
+                signal,
+                code=self.kospi_futures_contract_code,
+                decision="futures_buy_executed",
+                reason=f"requested={requested_qty}, executed={buy_quantity}",
+            )
+            return
+
+        sell_quantity = min(requested_qty, open_quantity)
+        if sell_quantity <= 0:
+            await self.notifier.notify_kospi_futures(
+                f"ℹ️ **[KOSPI Futures Sell]** {self.kospi_futures_contract_code} 청산 대상이 없습니다."
+            )
+            self._record_investment_journal(
+                signal,
+                code=self.kospi_futures_contract_code,
+                decision="skipped",
+                reason="no_open_futures_position",
+            )
+            return
+
+        price = self.market_handler.fetch_domestic_future_price(
+            self.kospi_futures_contract_code,
+            market_cls_code=self.kospi_futures_market_cls_code,
+        )
+        res = self.market_handler.create_futureoption_sell_order(
+            self.kospi_futures_contract_code,
+            sell_quantity,
+            account_product_code="03",
+        )
+        if res.get("rt_cd") != "0":
+            fail_msg = f"❌ **[KOSPI Futures Sell Fail]** {self.kospi_futures_contract_code} {sell_quantity}계약 청산 실패: {res.get('msg1')}"
+            await self.notifier.notify_kospi_futures(fail_msg)
+            self._record_investment_journal(
+                signal,
+                code=self.kospi_futures_contract_code,
+                decision="futures_sell_failed",
+                reason=str(res.get("msg1") or res.get("msg_cd") or "unknown_error"),
+            )
+            return
+
+        executed_price = price or self._extract_price(res)
+        remaining_quantity = max(open_quantity - sell_quantity, 0)
+        self._save_kospi_futures_state(
+            {
+                "open_quantity": remaining_quantity,
+                "last_action": "sell",
+                "last_price": executed_price,
+                "last_updated": self._now_market_tz().isoformat(),
+            }
+        )
+        await self.notifier.notify_kospi_futures(
+            "✅ **[KOSPI Futures Sell]** "
+            f"{self.kospi_futures_contract_code} {sell_quantity}계약 청산 완료 "
+            f"(체결가: {executed_price:,}원, 잔여 {remaining_quantity}계약)"
+        )
+        self._record_investment_journal(
+            signal,
+            code=self.kospi_futures_contract_code,
+            decision="futures_sell_executed",
+            reason=f"requested={requested_qty}, executed={sell_quantity}",
+        )
+
+    @staticmethod
+    def _extract_futures_quantity(text: str) -> int:
+        match = FUTURES_QUANTITY_PATTERN.search(text or "")
+        if not match:
+            return 0
+        try:
+            return int(match.group(1))
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _is_futures_insufficient_orderable_amount(response: dict) -> bool:
+        msg_cd = str(response.get("msg_cd") or "").strip()
+        msg1 = str(response.get("msg1") or "").strip()
+        if msg_cd == "40250000":
+            return True
+        return "주문가능금액이 부족" in msg1 or "증거금" in msg1
+
+    async def _track_chart_master_kospi_paper_position(
+        self,
+        signal: ReadingSignal,
+        *,
+        state: dict,
+        requested_qty: int,
+        open_quantity: int,
+    ) -> None:
+        current_price = self.market_handler.fetch_domestic_future_price(
+            self.kospi_futures_contract_code,
+            market_cls_code=self.kospi_futures_market_cls_code,
+        )
+        action = signal.action
+
+        if action == "buy_candidate":
+            buy_quantity = requested_qty
+            if buy_quantity <= 0:
+                buy_quantity = self.kospi_futures_default_quantity
+
+            avg_entry_price = float(state.get("avg_entry_price") or 0.0)
+            total_quantity = open_quantity + buy_quantity
+            next_avg_entry = (
+                ((avg_entry_price * open_quantity) + (float(current_price) * buy_quantity)) / total_quantity
+                if total_quantity > 0 else 0.0
+            )
+            self._save_kospi_futures_state(
+                {
+                    "open_quantity": total_quantity,
+                    "avg_entry_price": next_avg_entry,
+                    "last_action": "paper_buy",
+                    "last_price": current_price,
+                    "last_updated": self._now_market_tz().isoformat(),
+                }
+            )
+            unrealized_pnl_points = (float(current_price) - next_avg_entry) * total_quantity
+            await self.notifier.notify_kospi_futures(
+                "📝 **[KOSPI Futures Paper Buy]** "
+                f"{self.kospi_futures_contract_code} {buy_quantity}계약 가상 진입 "
+                f"(기준가: {float(current_price):,.2f}, 평균가: {next_avg_entry:,.2f}, "
+                f"보유 {total_quantity}계약, 평가손익 {unrealized_pnl_points:+.2f}pt)"
+            )
+            self._record_investment_journal(
+                signal,
+                code=self.kospi_futures_contract_code,
+                decision="futures_paper_buy_tracked",
+                reason=f"requested={requested_qty}, tracked={buy_quantity}, price={float(current_price):.2f}",
+            )
+            return
+
+        sell_quantity = min(requested_qty, open_quantity)
+        if sell_quantity <= 0:
+            await self.notifier.notify_kospi_futures(
+                f"ℹ️ **[KOSPI Futures Paper Sell]** {self.kospi_futures_contract_code} 청산할 가상 포지션이 없습니다."
+            )
+            self._record_investment_journal(
+                signal,
+                code=self.kospi_futures_contract_code,
+                decision="skipped",
+                reason="no_open_paper_futures_position",
+            )
+            return
+
+        avg_entry_price = float(state.get("avg_entry_price") or 0.0)
+        realized_pnl_points = (float(current_price) - avg_entry_price) * sell_quantity
+        cumulative_realized_pnl_points = float(state.get("realized_pnl_points") or 0.0) + realized_pnl_points
+        remaining_quantity = max(open_quantity - sell_quantity, 0)
+        next_avg_entry = avg_entry_price if remaining_quantity > 0 else 0.0
+        self._save_kospi_futures_state(
+            {
+                "open_quantity": remaining_quantity,
+                "avg_entry_price": next_avg_entry,
+                "realized_pnl_points": cumulative_realized_pnl_points,
+                "last_realized_pnl_points": realized_pnl_points,
+                "last_action": "paper_sell",
+                "last_price": current_price,
+                "last_updated": self._now_market_tz().isoformat(),
+            }
+        )
+        await self.notifier.notify_kospi_futures(
+            "📝 **[KOSPI Futures Paper Sell]** "
+            f"{self.kospi_futures_contract_code} {sell_quantity}계약 가상 청산 "
+            f"(청산가: {float(current_price):,.2f}, 실현손익 {realized_pnl_points:+.2f}pt, "
+            f"누적 {cumulative_realized_pnl_points:+.2f}pt, 잔여 {remaining_quantity}계약)"
+        )
+        self._record_investment_journal(
+            signal,
+            code=self.kospi_futures_contract_code,
+            decision="futures_paper_sell_tracked",
+            reason=f"requested={requested_qty}, tracked={sell_quantity}, price={float(current_price):.2f}, pnl_points={realized_pnl_points:+.2f}",
+        )
+
+    def _load_kospi_futures_state(self) -> dict:
+        today = self._today_market_date()
+        if not self.kospi_futures_state_path.exists():
+            return {"date": today, "open_quantity": 0, "avg_entry_price": 0.0, "realized_pnl_points": 0.0}
+
+        try:
+            with open(self.kospi_futures_state_path, "r", encoding="utf-8") as f:
+                state = json.load(f)
+        except Exception:
+            return {"date": today, "open_quantity": 0, "avg_entry_price": 0.0, "realized_pnl_points": 0.0}
+
+        if not isinstance(state, dict):
+            return {"date": today, "open_quantity": 0, "avg_entry_price": 0.0, "realized_pnl_points": 0.0}
+        if state.get("date") != today:
+            state = {"date": today, "open_quantity": 0, "avg_entry_price": 0.0, "realized_pnl_points": 0.0}
+        state["open_quantity"] = int(state.get("open_quantity", 0) or 0)
+        state["avg_entry_price"] = float(state.get("avg_entry_price", 0.0) or 0.0)
+        state["realized_pnl_points"] = float(state.get("realized_pnl_points", 0.0) or 0.0)
+        return state
+
+    def _save_kospi_futures_state(self, patch: dict) -> None:
+        state = self._load_kospi_futures_state()
+        state.update(patch)
+        state["date"] = self._today_market_date()
+        state["open_quantity"] = max(int(state.get("open_quantity", 0) or 0), 0)
+        with open(self.kospi_futures_state_path, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
 
     async def track_scheduled_orders_loop(self):
         logger.info(
@@ -606,6 +980,7 @@ class DanteTrader:
 
         report = f"💰 **[Account Status]**\n• **예수금**: {cash:,}원\n\n"
         report += self._build_autonomous_strategy_status()
+        report += self._build_kospi_futures_status()
 
         # 2. 보유 종목 현황
         active_trades = self._reconcile_active_trades_with_balance()
@@ -1172,6 +1547,7 @@ class DanteTrader:
         payload = {
             "recorded_at": self._now_market_tz().isoformat(),
             "source": signal.source,
+            "strategy_name": signal.strategy_name,
             "message_id": signal.message_id,
             "posted_at": signal.posted_at.isoformat(),
             "chat_id": signal.chat_id,
@@ -1328,7 +1704,38 @@ class DanteTrader:
             f"• 신뢰도 기준: 매수 {self.llm_auto_buy_min_confidence:.2f}, "
             f"매도 {self.llm_auto_sell_min_confidence:.2f}\n"
             f"• 종목별 매수 쿨다운: {self.llm_auto_symbol_cooldown_minutes}분\n\n"
+            "📈 **KOSPI 선물 전략**\n"
+            f"• 일 예산: {self.kospi_futures_daily_budget_krw:,}원\n"
+            f"• 계약 예산: {self.kospi_futures_contract_budget_krw:,}원 / 계약\n"
+            f"• 기본 종목코드: {self.kospi_futures_contract_code}\n"
+            f"• 모드: {self.kospi_futures_mode}\n\n"
         )
+
+    def _build_kospi_futures_status(self) -> str:
+        state = self._load_kospi_futures_state()
+        open_quantity = int(state.get("open_quantity", 0) or 0)
+        avg_entry_price = float(state.get("avg_entry_price", 0.0) or 0.0)
+        realized_pnl_points = float(state.get("realized_pnl_points", 0.0) or 0.0)
+
+        if self.kospi_futures_track_only:
+            current_price = self.market_handler.fetch_domestic_future_price(
+                self.kospi_futures_contract_code,
+                market_cls_code=self.kospi_futures_market_cls_code,
+            )
+            unrealized_pnl_points = (
+                (float(current_price) - avg_entry_price) * open_quantity if open_quantity > 0 else 0.0
+            )
+            return (
+                "📈 **KOSPI 선물 가상 추적**\n"
+                f"• 종목코드: {self.kospi_futures_contract_code}\n"
+                f"• 보유: {open_quantity}계약\n"
+                f"• 평균 진입가: {avg_entry_price:,.2f}\n"
+                f"• 현재가: {float(current_price):,.2f}\n"
+                f"• 평가손익: {unrealized_pnl_points:+.2f}pt\n"
+                f"• 누적 실현손익: {realized_pnl_points:+.2f}pt\n\n"
+            )
+
+        return ""
 
     def _build_daily_review(self, review_date: date) -> str:
         date_key = review_date.isoformat()

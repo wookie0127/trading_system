@@ -24,7 +24,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl git ca-certificates \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
-    && npm install -g @google/gemini-cli \
+    && npm install -g @google/gemini-cli @openai/codex \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the installed dependencies from the builder
