@@ -63,10 +63,11 @@ src/
   ```
   모의투자 전용 계정을 쓰는 경우에는 아래처럼 `PAPER_*` 키만 넣어도 됩니다.
   ```
-  PAPER_ACCOUNT=12345678
+  PAPER_ACCOUNT_STOCK_KOR=12345678
+  PAPER_ACCOUNT_STOCK_ABR=23456789
+  PAPER_ACCOUNT_FUTURE_KOR=34567890
   PAPER_APP_KEY=your_paper_app_key
   PAPER_APP_SECRET=your_paper_app_secret
-  PAPER_ACNT_PRDT_CD=01
   ```
   이 경우 코드가 자동으로 모의투자 프로필을 선택하고 VTS 엔드포인트를 사용합니다.
 

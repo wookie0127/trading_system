@@ -107,7 +107,8 @@ class KISAuthHandler:
     def _resolve_account_credentials(self, profile: str) -> tuple[str, str]:
         if profile == "paper":
             account = (
-                os.getenv("PAPER_ACCOUNT")
+                os.getenv("PAPER_ACCOUNT_STOCK_KOR")
+                or os.getenv("PAPER_ACCOUNT")
                 or os.getenv("PAPER_CANO")
                 or os.getenv("PAPER_KIS_CANO")
                 or ""

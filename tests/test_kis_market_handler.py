@@ -73,3 +73,33 @@ def test_create_futureoption_order_rejects_non_future_account_code():
 
     with pytest.raises(ValueError, match="ACNT_PRDT_CD=03"):
         handler.create_futureoption_sell_order("101W09", 1)
+
+
+def test_resolve_paper_market_accounts_by_exchange(monkeypatch):
+    handler = MarketHandler.__new__(MarketHandler)
+    monkeypatch.setenv("PAPER_ACCOUNT_STOCK_KOR", "11111111")
+    monkeypatch.setenv("PAPER_ACCOUNT_STOCK_ABR", "22222222")
+
+    assert handler._resolve_paper_market_account("서울") == ("11111111", "01")
+    assert handler._resolve_paper_market_account("나스닥") == ("22222222", "01")
+
+
+def test_futureoption_order_uses_paper_future_account(monkeypatch):
+    handler = _build_handler()
+    handler.credential_profile = "paper"
+    handler.is_simulation = True
+    captured = {}
+
+    monkeypatch.setenv("PAPER_ACCOUNT_FUTURE_KOR", "33333333")
+    monkeypatch.setattr(handler, "_issue_hashkey", lambda payload: "hash-123")
+
+    def fake_request(method, url, headers, params=None, json=None, timeout=None):
+        captured["json"] = json
+        return _FakeResponse({"rt_cd": "0", "msg1": "OK"})
+
+    monkeypatch.setattr(httpx, "request", fake_request)
+
+    handler.create_futureoption_buy_order("101W09", 1)
+
+    assert captured["json"]["CANO"] == "33333333"
+    assert captured["json"]["ACNT_PRDT_CD"] == "03"

@@ -73,11 +73,14 @@ def load_codes() -> list[dict]:
 class MarketHandler(KISAuthHandler):
     def __init__(self, exchange: str = "서울"):
         super().__init__()
+        self.exchange = exchange
+        if self.credential_profile == "paper":
+            self.account_number, self.account_product_code = self._resolve_paper_market_account(exchange)
+
         self.reference_dir = CURRENT_DIR.parent.parent / "data" / "reference"
         self.reference_dir.mkdir(parents=True, exist_ok=True)
         self.krx_code_cache_path = self.reference_dir / "krx_all_symbols.json"
         self._code_df = self._load_all_codes()
-        self.exchange = exchange
 
         # 계좌 설정 (8자리-2자리 분리)
         cano = self.account_number
@@ -92,6 +95,66 @@ class MarketHandler(KISAuthHandler):
 
         if not self.acc_no_prefix:
             logger.warning("No KIS account number configured for profile={}", self.credential_profile)
+
+    def _resolve_paper_market_account(self, exchange: str) -> tuple[str, str]:
+        if exchange == "서울":
+            account = (
+                os.getenv("PAPER_ACCOUNT_STOCK_KOR")
+                or os.getenv("PAPER_ACCOUNT")
+                or os.getenv("PAPER_CANO")
+                or os.getenv("PAPER_KIS_CANO")
+                or ""
+            )
+            product_code = (
+                os.getenv("PAPER_ACNT_PRDT_CD_STOCK_KOR")
+                or os.getenv("PAPER_ACNT_PRDT_CD")
+                or os.getenv("PAPER_ACCOUNT_PRODUCT_CODE")
+                or os.getenv("KIS_ACNT_PRDT_CD")
+                or "01"
+            )
+            return account, product_code
+
+        account = (
+            os.getenv("PAPER_ACCOUNT_STOCK_ABR")
+            or os.getenv("PAPER_ACCOUNT")
+            or os.getenv("PAPER_CANO")
+            or os.getenv("PAPER_KIS_CANO")
+            or ""
+        )
+        product_code = (
+            os.getenv("PAPER_ACNT_PRDT_CD_STOCK_ABR")
+            or os.getenv("PAPER_ACNT_PRDT_CD")
+            or os.getenv("PAPER_ACCOUNT_PRODUCT_CODE")
+            or os.getenv("KIS_ACNT_PRDT_CD")
+            or "01"
+        )
+        return account, product_code
+
+    def _resolve_domestic_futureoption_account(
+        self,
+        account_product_code: str | None,
+    ) -> tuple[str, str]:
+        account = self.account_number
+        product_code = account_product_code or self.account_product_code
+
+        if self.credential_profile == "paper":
+            account = (
+                os.getenv("PAPER_ACCOUNT_FUTURE_KOR")
+                or os.getenv("PAPER_ACCOUNT")
+                or os.getenv("PAPER_CANO")
+                or os.getenv("PAPER_KIS_CANO")
+                or account
+            )
+            product_code = (
+                account_product_code
+                or os.getenv("PAPER_ACNT_PRDT_CD_FUTURE_KOR")
+                or "03"
+            )
+
+        if "-" in account:
+            account_prefix, account_postfix = account.split("-", 1)
+            return account_prefix, account_product_code or account_postfix
+        return account, str(product_code).zfill(2)
 
     def _load_all_codes(self) -> list[dict]:
         records = load_codes()
@@ -748,7 +811,8 @@ class MarketHandler(KISAuthHandler):
         if ord_dv not in {"day", "night"}:
             raise ValueError("ord_dv can only be 'day' or 'night'")
 
-        acnt_prdt_cd = (account_product_code or self.account_product_code or "").strip()
+        cano, acnt_prdt_cd = self._resolve_domestic_futureoption_account(account_product_code)
+        acnt_prdt_cd = acnt_prdt_cd.strip()
         if not acnt_prdt_cd:
             raise ValueError("Domestic futureoption orders require an account product code")
         if acnt_prdt_cd != "03":
@@ -760,7 +824,7 @@ class MarketHandler(KISAuthHandler):
         sll_buy_dvsn_cd = "02" if side == "buy" else "01"
         body = {
             "ORD_PRCS_DVSN_CD": ord_prcs_dvsn_cd,
-            "CANO": self.acc_no_prefix,
+            "CANO": cano,
             "ACNT_PRDT_CD": acnt_prdt_cd,
             "SLL_BUY_DVSN_CD": sll_buy_dvsn_cd,
             "SHTN_PDNO": shtn_pdno,
