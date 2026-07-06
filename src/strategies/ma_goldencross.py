@@ -6,11 +6,45 @@
 import polars as pl
 
 
-short_ma_period = 20
-long_ma_period = 60
+DEFAULT_SHORT_MA_PERIOD = 20
+DEFAULT_LONG_MA_PERIOD = 60
 
 
-def add_signals(df: pl.DataFrame, short_ma_period: int = short_ma_period, long_ma_period: int = long_ma_period) -> pl.DataFrame:
+class MovingAverageGoldenCrossStrategy:
+    """Moving average golden/dead cross strategy.
+
+    단기 이동평균선이 장기 이동평균선을 상향 돌파하면 매수하고,
+    단기 이동평균선이 장기 이동평균선을 하향 돌파하면 매도한다.
+    """
+
+    def __init__(
+        self,
+        short_ma_period: int = DEFAULT_SHORT_MA_PERIOD,
+        long_ma_period: int = DEFAULT_LONG_MA_PERIOD,
+    ):
+        if short_ma_period <= 0:
+            raise ValueError("short_ma_period must be positive.")
+        if long_ma_period <= 0:
+            raise ValueError("long_ma_period must be positive.")
+        if short_ma_period >= long_ma_period:
+            raise ValueError("short_ma_period must be smaller than long_ma_period.")
+
+        self.short_ma_period = short_ma_period
+        self.long_ma_period = long_ma_period
+
+    def generate_signals(self, df: pl.DataFrame) -> pl.DataFrame:
+        return add_signals(
+            df=df,
+            short_ma_period=self.short_ma_period,
+            long_ma_period=self.long_ma_period,
+        )
+
+
+def add_signals(
+    df: pl.DataFrame,
+    short_ma_period: int = DEFAULT_SHORT_MA_PERIOD,
+    long_ma_period: int = DEFAULT_LONG_MA_PERIOD,
+) -> pl.DataFrame:
     sort_columns = ["timestamp"]
     if "symbol" in df.columns:
         sort_columns = ["symbol", "timestamp"]
@@ -103,8 +137,8 @@ def backtest_by_symbol(df: pl.DataFrame, initial_balance: float = 1000000) -> pl
 
 def main(
     fpath: str,
-    short_ma_period: int = short_ma_period,
-    long_ma_period: int = long_ma_period,
+    short_ma_period: int = DEFAULT_SHORT_MA_PERIOD,
+    long_ma_period: int = DEFAULT_LONG_MA_PERIOD,
     initial_balance: float = 1000000,
 ):
     df = pl.read_parquet(fpath)

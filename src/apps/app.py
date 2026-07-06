@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
 
 import polars as pl
@@ -15,85 +13,13 @@ SRC_DIR = CURRENT_DIR.parents[1]
 if str(SRC_DIR) not in sys.path:
     sys.path.append(str(SRC_DIR))
 
+from data.market_data import (
+    discover_data_roots,
+    list_available_dates,
+    load_intraday_window,
+    summarize_period_returns,
+)
 from strategies.ma_goldencross import add_signals, backtest_ma_cross
-
-
-DEFAULT_DATA_ROOTS = [
-    Path("src/data/market_data/kr/kospi200/1min"),
-    Path("market_data/kr/kospi200/1min"),
-    Path("data/market_data/kr/kospi200/1min"),
-]
-
-
-@dataclass(frozen=True)
-class DataWindow:
-    root: Path
-    files: list[Path]
-    frame: pl.DataFrame
-
-
-def discover_data_roots() -> list[Path]:
-    roots: list[Path] = []
-    for root in DEFAULT_DATA_ROOTS:
-        if root.exists() and root.is_dir() and any(root.glob("*.parquet")):
-            roots.append(root)
-    return roots
-
-
-def list_available_dates(root: Path) -> list[date]:
-    dates: list[date] = []
-    for path in sorted(root.glob("*.parquet")):
-        try:
-            dates.append(date.fromisoformat(path.stem))
-        except ValueError:
-            continue
-    return dates
-
-
-@st.cache_data(show_spinner=False)
-def load_intraday_window(root: str, start_date: date, end_date: date) -> DataWindow:
-    root_path = Path(root)
-    files = [
-        path
-        for path in sorted(root_path.glob("*.parquet"))
-        if start_date <= date.fromisoformat(path.stem) <= end_date
-    ]
-    if not files:
-        return DataWindow(root=root_path, files=[], frame=pl.DataFrame())
-
-    frame = pl.concat([pl.read_parquet(path) for path in files], how="vertical_relaxed")
-    frame = frame.sort(["symbol", "timestamp"]) if {"symbol", "timestamp"}.issubset(frame.columns) else frame
-    return DataWindow(root=root_path, files=files, frame=frame)
-
-
-def summarize_period_returns(frame: pl.DataFrame) -> pl.DataFrame:
-    if frame.is_empty():
-        return pl.DataFrame()
-
-    required = {"timestamp", "symbol", "close"}
-    if not required.issubset(frame.columns):
-        missing = ", ".join(sorted(required - set(frame.columns)))
-        raise ValueError(f"Missing required columns: {missing}")
-
-    return (
-        frame.sort(["symbol", "timestamp"])
-        .group_by("symbol")
-        .agg(
-            pl.col("timestamp").first().alias("start_ts"),
-            pl.col("timestamp").last().alias("end_ts"),
-            pl.col("close").first().alias("start_close"),
-            pl.col("close").last().alias("end_close"),
-            pl.len().alias("bars"),
-        )
-        .with_columns(
-            ((pl.col("end_close") / pl.col("start_close")) - 1).mul(100).alias("return_pct"),
-            pl.when(pl.col("start_close") > 0)
-            .then(pl.col("end_close") / pl.col("start_close"))
-            .otherwise(None)
-            .alias("return_multiple"),
-        )
-        .sort("return_pct", descending=True)
-    )
 
 
 def _symbol_frame(frame: pl.DataFrame, symbol: str) -> pl.DataFrame:

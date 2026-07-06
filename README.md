@@ -660,6 +660,18 @@ uv run streamlit run src/strategies/app.py
 
 대시보드에서 데이터 루트, 날짜 범위, 종목, short/long MA 기간, 초기 자본을 바꿔가며 결과를 확인할 수 있습니다.
 
+### Backtest Dashboard Streamlit
+
+`src/strategies/custom_backtest_app.py`는 KOSPI 200 1분봉 parquet를 읽어 moving average 전략 백테스트 결과를 4분면 dashboard로 보여줍니다.
+
+```bash
+uv run streamlit run src/strategies/custom_backtest_app.py
+```
+
+Sidebar에서 데이터 경로, 심볼, 기간, strategy, strategy별 동적 파라미터, initial cash, 수수료/슬리피지를 설정합니다.
+Main 영역은 config/KPI, 가격 차트, equity/drawdown, trade log/compare table의 4분면으로 구성됩니다.
+이번 대시보드는 ML replay, timestamp별 state 재현, event-driven order simulator를 포함하지 않습니다.
+
 ### 문서
 
 - [`docs/architecture.md`](/Users/giwooklee/Workspace/trading_system/docs/architecture.md)
