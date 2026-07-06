@@ -26,8 +26,7 @@ src/follow_telegram_leading/*.session*
 src/follow_telegram_leading/chats.yaml
 logs/follow_tleading_reading/
 logs/follow_telegram_leading/
-data
-data/
+dataset
 market_data/
 backups/
 obsidian/
@@ -42,4 +41,3 @@ reference/
 hello.py
 tests/data/
 
-data/

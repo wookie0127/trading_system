@@ -9,7 +9,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from loguru import logger
 
-MARKET_DATA_DIR = Path(__file__).parents[1] / "data" / "market_data"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+MARKET_DATA_DIR = PROJECT_ROOT / "dataset" / "market_data"
 _NUMERIC_FLOAT_COLUMNS = ("open", "high", "low", "close", "volume", "trade_value")
 
 _PATHS = {
