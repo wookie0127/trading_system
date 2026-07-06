@@ -19,7 +19,6 @@ dependencies = [
     "playwright-stealth>=2.0.2",
     "prefect>=3.6.24",
     "pyarrow>=22.0.0",
-    "pyqt5>=5.15.11; sys_platform != 'linux' or platform_machine != 'aarch64'",
     "python-dotenv>=1.2.1",
     "pyyaml>=6.0.2",
     "requests>=2.32.3",

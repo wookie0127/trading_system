@@ -156,6 +156,14 @@ class TleadingTrader:
 
     async def handle_signal(self, signal: ReadingSignal, tg: anyio.abc.TaskGroup | None = None):
         """매매 신호를 처리하고 필요 시 Discord 컨펌을 요청합니다."""
+        if self._is_weekend():
+            logger.info(
+                "Skipping Telegram leading signal handling on weekend (action={}, strategy_name={})",
+                signal.action,
+                signal.strategy_name,
+            )
+            return
+
         # 1. 시그널 요약 다이어리에 기록
         summary_msg = f"📔 **[Tleading Diary]** {signal.company_name or '시황 요약'}\n• 요약: {signal.summary}\n• 판단: {signal.action} / {signal.trade_style} (신뢰도: {signal.confidence:.2f})\n• 근거: {signal.rationale_text}"
         await self.notifier.notify_diary(summary_msg)
@@ -690,6 +698,9 @@ class TleadingTrader:
         )
         while True:
             try:
+                if self._is_weekend():
+                    await anyio.sleep(self.daily_review_poll_seconds)
+                    continue
                 await self.process_daily_review()
             except Exception as e:
                 logger.exception("Error in daily review loop: {}", e)
@@ -698,6 +709,9 @@ class TleadingTrader:
 
     async def process_daily_review(self) -> None:
         now = self._now_market_tz()
+        if self._is_weekend(now):
+            logger.info("Skipping daily review on weekend ({})", now.date().isoformat())
+            return
         if now.time() < self.daily_review_time:
             return
 
@@ -2050,6 +2064,10 @@ class TleadingTrader:
     def _should_send_post_market_briefing(self, now: datetime | None = None) -> bool:
         now = now or self._now_market_tz()
         return now.weekday() < 5 and now.time() > self.market_close_time
+
+    def _is_weekend(self, now: datetime | None = None) -> bool:
+        now = now or self._now_market_tz()
+        return now.weekday() >= 5
 
     def _build_post_market_briefing(self, code: str, trade: dict, trade_date: date) -> str | None:
         price_info = self.market_handler.fetch_price(code)

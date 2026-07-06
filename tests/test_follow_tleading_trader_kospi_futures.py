@@ -199,3 +199,34 @@ def test_chart_master_kospi_track_only_updates_paper_position_and_pnl(tmp_path):
     assert state["realized_pnl_points"] == 2.5
     assert any("KOSPI Futures Paper Buy" in message for message in trader.notifier.messages)
     assert any("KOSPI Futures Paper Sell" in message for message in trader.notifier.messages)
+
+
+def test_handle_signal_skips_weekend_processing(tmp_path):
+    trader = TleadingTrader.__new__(TleadingTrader)
+    trader.notifier = _FakeNotifier()
+    trader.market_handler = _FakeMarketHandler()
+    trader.market_timezone = timezone.utc
+    trader._now_market_tz = lambda: datetime(2026, 7, 4, 9, 0, tzinfo=timezone.utc)
+
+    anyio.run(trader.handle_signal, _build_signal("buy_candidate", "코스피 2계약 매수진입"))
+
+    assert trader.notifier.messages == []
+    assert trader.market_handler.calls == []
+
+
+def test_daily_review_skips_weekend_processing(monkeypatch):
+    trader = TleadingTrader.__new__(TleadingTrader)
+    trader.market_timezone = timezone.utc
+    trader.daily_review_time = datetime(2026, 7, 4, 15, 45, tzinfo=timezone.utc).time()
+    trader._now_market_tz = lambda: datetime(2026, 7, 4, 16, 0, tzinfo=timezone.utc)
+    trader._load_daily_reviews = lambda: (_ for _ in ()).throw(AssertionError("should not load reviews on weekend"))
+    trader._save_daily_reviews = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not save reviews on weekend"))
+    trader._build_daily_review = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not build review on weekend"))
+    trader._write_daily_review_markdown = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not write review on weekend"))
+
+    async def fail_input(*args, **kwargs):
+        raise AssertionError("should not request review input on weekend")
+
+    monkeypatch.setattr("follow_telegram_leading.trader.get_discord_input", fail_input)
+
+    anyio.run(trader.process_daily_review)

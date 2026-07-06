@@ -168,7 +168,7 @@ TLEADING_INVEST_REVIEW_CHANNEL_NAME: "📊-매매-복기"
 
 ### 📰 아침 뉴스 브리핑
 
-매일 오전 7시(KST)에 RSS 헤드라인을 수집한 뒤 OpenAI, Codex CLI, Gemini 중 하나로 한국어 Markdown 브리핑을 생성해 저장할 수 있습니다.
+월~금 오전 7시(KST)에 RSS 헤드라인을 수집한 뒤 OpenAI, Codex CLI, Gemini 중 하나로 한국어 Markdown 브리핑을 생성해 저장할 수 있습니다.
 
 - 기본 저장 경로: `data/news_summaries/YYYY-MM-DD.md`
 - 기본 백엔드: `openai`
@@ -203,7 +203,7 @@ Prefect 배포:
 ```bash
 uv run prefect deploy src/news/daily_news_orchestrator.py:daily_news_summary_flow \
   --name "Daily-News-Summary" \
-  --cron "0 7 * * *" \
+  --cron "0 7 * * 1-5" \
   --timezone "Asia/Seoul" \
   --pool "default-agent-pool"
 ```
@@ -323,7 +323,7 @@ Prefect 배포:
 ```bash
 uv run prefect deploy src/news/gemini_news_orchestrator.py:daily_news_summary_gemini_flow \
   --name "Daily-News-Summary-Gemini" \
-  --cron "0 7 * * *" \
+  --cron "0 7 * * 1-5" \
   --timezone "Asia/Seoul" \
   --pool "default-agent-pool"
 ```
@@ -389,19 +389,19 @@ uv run prefect worker start --pool "default-agent-pool"
 
 #### 4단계: 스케줄 배포
 
-한국시간 기준 새벽 6시 30분(화~토)에 직전 한국장 KOSPI200과 직전 미국장 ETF 바스켓 `SPY / QQQ / IWM / XLK / XLF / TLT / GLD / IBIT` 1분봉을 함께 수집하도록 배포합니다.
+한국시간 기준 월~금 새벽 6시 30분에 직전 한국장 KOSPI200과 직전 미국장 ETF 바스켓 `SPY / QQQ / IWM / XLK / XLF / TLT / GLD / IBIT` 1분봉을 함께 수집하도록 배포합니다.
 
 ```bash
 uv run prefect deploy src/pipelines/daily_yahoo_intraday_orchestrator.py:daily_yahoo_intraday_flow \
   --name "Daily-Yahoo-Intraday" \
-  --cron "30 6 * * 2-6" \
+  --cron "30 6 * * 1-5" \
   --timezone "Asia/Seoul" \
   --pool "default-agent-pool"
 
-# 네이버 종목 토론방 수집 (하루 2번, 12시간 간격)
+# 네이버 종목 토론방 수집 (월~금, 12시간 간격)
 uv run prefect deploy src/collectors/naver_board/orchestrator.py:naver_board_flow \
   --name "Naver-Board-Sync" \
-  --cron "0 */12 * * *" \
+  --cron "0 */12 * * 1-5" \
   --timezone "Asia/Seoul" \
   --pool "default-agent-pool"
 ```
@@ -649,6 +649,28 @@ shell/run_trading_harness_cmux.sh report
 
 - `us_market_shock_inverse`: 전일 QQQ 하락률이 `-1.5%` 이하이고 VIX 상승률이 `5%` 이상이면 한국 인버스 signal을 생성합니다.
 - `trend_following`: `close > ma_20`이고 `ma_20 > ma_60`이면 long signal을 생성합니다. 초기 대상은 `qqq`, `btc`, `eth`입니다.
+
+### MA Golden Cross Streamlit
+
+`src/strategies/app.py`는 KOSPI 200 1분봉 parquet를 읽어서 기간별 종목 수익률과 이동평균선 교차 결과를 보여줍니다.
+
+```bash
+uv run streamlit run src/strategies/app.py
+```
+
+대시보드에서 데이터 루트, 날짜 범위, 종목, short/long MA 기간, 초기 자본을 바꿔가며 결과를 확인할 수 있습니다.
+
+### Backtest Dashboard Streamlit
+
+`src/strategies/custom_backtest_app.py`는 KOSPI 200 1분봉 parquet를 읽어 moving average 전략 백테스트 결과를 4분면 dashboard로 보여줍니다.
+
+```bash
+uv run streamlit run src/strategies/custom_backtest_app.py
+```
+
+Sidebar에서 데이터 경로, 심볼, 기간, strategy, strategy별 동적 파라미터, initial cash, 수수료/슬리피지를 설정합니다.
+Main 영역은 config/KPI, 가격 차트, equity/drawdown, trade log/compare table의 4분면으로 구성됩니다.
+이번 대시보드는 ML replay, timestamp별 state 재현, event-driven order simulator를 포함하지 않습니다.
 
 ### 문서
 
