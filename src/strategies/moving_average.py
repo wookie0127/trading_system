@@ -7,12 +7,20 @@ import polars as pl
 from strategies.ma_goldencross import add_signals
 
 
-@dataclass(frozen=True)
 class MovingAverageCrossStrategy:
-    name: str = "Moving Average Cross"
+    def __init__(
+        self,
+        name: str = "Moving Average Cross",
+        fast_window: int = 20,
+        slow_window: int = 60,
+        **kwargs
+    ):
+        self.name = name
+        self.fast_window = fast_window
+        self.slow_window = slow_window
 
-    def generate_signals(self, df: pl.DataFrame, fast_window: int = 20, slow_window: int = 60) -> pl.DataFrame:
-        return add_moving_average_signals(df, fast_window=fast_window, slow_window=slow_window)
+    def generate_signals(self, df: pl.DataFrame) -> pl.DataFrame:
+        return add_moving_average_signals(df, fast_window=self.fast_window, slow_window=self.slow_window)
 
 
 def add_moving_average_signals(df: pl.DataFrame, fast_window: int = 20, slow_window: int = 60) -> pl.DataFrame:

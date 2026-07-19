@@ -68,7 +68,7 @@ class TleadingTrader:
         self.llm_auto_max_active_positions = int(os.getenv("TLEADING_LLM_AUTO_MAX_ACTIVE_POSITIONS", "5"))
         self.llm_auto_symbol_cooldown_minutes = int(os.getenv("TLEADING_LLM_AUTO_SYMBOL_COOLDOWN_MINUTES", "60"))
         self.daily_review_poll_seconds = int(os.getenv("TLEADING_DAILY_REVIEW_POLL_SECONDS", "300"))
-        self.daily_review_time = self._parse_hhmm(os.getenv("TLEADING_DAILY_REVIEW_TIME", "15:45"))
+        self.daily_review_time = self._parse_hhmm(os.getenv("TLEADING_DAILY_REVIEW_TIME", "23:00"))
         self.kospi_futures_contract_code = os.getenv("TLEADING_KOSPI_FUTURES_CONTRACT_CODE", "101W09").strip()
         self.kospi_futures_market_cls_code = os.getenv("TLEADING_KOSPI_FUTURES_MARKET_CLS_CODE", "MKI").strip()
         self.kospi_futures_daily_budget_krw = int(os.getenv("TLEADING_KOSPI_FUTURES_DAILY_BUDGET_KRW", "1000000"))

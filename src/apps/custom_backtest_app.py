@@ -13,7 +13,10 @@ if str(SRC_DIR) not in sys.path:
     sys.path.append(str(SRC_DIR))
 
 from backtest.engine import run_backtest, run_batch_backtests
-from dashboard.charts import plot_drawdown, plot_equity_curve, plot_price_with_signals
+import importlib
+import dashboard.charts
+importlib.reload(dashboard.charts)
+from dashboard.charts import plot_drawdown, plot_equity_curve, plot_price_with_signals, plot_combined_backtest_chart
 from dashboard.components import render_summary
 from dashboard.tables import render_compare_table, render_trade_table
 from data.market_data import (
@@ -22,6 +25,7 @@ from data.market_data import (
     list_available_dates,
     load_ohlcv,
     load_symbol_name_map,
+    symbol_lookup_key,
 )
 from strategies.parameters import StrategyParameter
 from strategies.registry import STRATEGY_REGISTRY, get_strategy_spec, instantiate_strategy
@@ -152,7 +156,22 @@ def render_dashboard() -> None:
 
     with st.sidebar:
         st.header("Backtest Config")
-        root = st.selectbox("Data Path", options=roots, format_func=lambda path: str(path))
+        
+        def format_root(p: Path) -> str:
+            try:
+                rel = p.relative_to(SRC_DIR.parent)
+                return f"{p.name} (.../{rel.parent})" if str(rel.parent) != "." else p.name
+            except ValueError:
+                return p.name
+
+        root = st.selectbox(
+            "Data Path",
+            options=roots,
+            format_func=format_root,
+            help="Select a directory containing historical parquet data files. The selected full path is shown below."
+        )
+        st.caption(f"**Selected path:** `{root}`")
+        
         available_dates = list_available_dates(root)
         if not available_dates:
             st.error("No parquet files found under the selected data path.")
@@ -160,7 +179,12 @@ def render_dashboard() -> None:
 
         sample_df = pl.read_parquet(sorted(root.glob("*.parquet"))[-1], columns=["symbol"])
         symbols = sorted(sample_df.select("symbol").unique().get_column("symbol").to_list())
-        symbol = st.selectbox("Symbol", options=symbols, format_func=lambda value: label_symbol(value, symbol_names))
+        
+        def format_symbol_label(val: str) -> str:
+            name = symbol_names.get(symbol_lookup_key(val))
+            return f"{name} ({val})" if name else str(val)
+
+        symbol = st.selectbox("Symbol", options=symbols, format_func=format_symbol_label)
 
         min_date = available_dates[0]
         max_date = available_dates[-1]
@@ -223,10 +247,20 @@ def render_dashboard() -> None:
         slippage=float(slippage),
     )
 
-    top_left, top_right = st.columns(2)
-    bottom_left, bottom_right = st.columns(2)
+    # 1. Combined Performance Chart (Full Width at the Top)
+    st.subheader("Backtest Performance Analysis")
+    combined_fig = plot_combined_backtest_chart(
+        ohlcv=result.ohlcv,
+        signals=result.signals,
+        trades=result.trades,
+        equity_curve=result.equity_curve
+    )
+    st.plotly_chart(combined_fig, use_container_width=True)
 
-    with top_left:
+    # 2. Other cells (Columns at the Bottom)
+    left_col, right_col = st.columns([0.4, 0.6])
+
+    with left_col:
         render_config_summary(
             strategy_name=strategy_spec.name,
             parameters=strategy_params,
@@ -238,21 +272,12 @@ def render_dashboard() -> None:
             slippage=float(slippage),
         )
         render_summary(result.metrics)
+        st.subheader("Compare Results")
+        render_compare_table(compare)
 
-    with top_right:
-        st.subheader("Price Chart")
-        st.plotly_chart(plot_price_with_signals(result.ohlcv, result.signals, result.trades), use_container_width=True)
-
-    with bottom_left:
-        st.subheader("Equity & Drawdown")
-        st.plotly_chart(plot_equity_curve(result.equity_curve), use_container_width=True)
-        st.plotly_chart(plot_drawdown(result.equity_curve), use_container_width=True)
-
-    with bottom_right:
+    with right_col:
         st.subheader("Trade Log")
         render_trade_table(result.trades)
-        st.subheader("Compare")
-        render_compare_table(compare)
 
 
 def main() -> None:

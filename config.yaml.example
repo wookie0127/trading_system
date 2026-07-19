@@ -5,7 +5,8 @@ DISCORD_CHANNEL_ID: your-default-discord-channel-id
 TLEADING_INVEST_DIARY_CHANNEL_ID: your-tleading-invest-diary-channel-id
 TLEADING_INVEST_REVIEW_CHANNEL_ID: your-tleading-invest-review-channel-id
 TLEADING_INVEST_REVIEW_CHANNEL_NAME: "📊-매매-복기"
-GEMINI_CLI_COMMAND: gemini
+TLEADING_DAILY_REVIEW_TIME: "23:00"
+AGY_CLI_COMMAND: agy
+AGY_MODEL:
 GEMINI_MODEL: gemini-2.5-flash
-GEMINI_APPROVAL_MODE: yolo
 GEMINI_TIMEOUT_SECONDS: 30

@@ -1,0 +1,7 @@
+system:
+  exchange: "binance"
+  symbol: "BTCUSDT"
+  market: "perpetual_futures"
+  decision_timeframe: "4h"
+  execution_mode: "shadow"  # options: shadow, paper, live
+  db_path: "trading_data.db"

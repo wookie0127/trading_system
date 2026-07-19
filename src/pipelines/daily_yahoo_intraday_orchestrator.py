@@ -12,12 +12,15 @@ from prefect import flow, get_run_logger, task
 from bots.notifier import Notifier
 from collectors.kr.kospi200_component_collector import collect_kospi200_components
 from collectors.us.yahoo_finance_collector import (
+    GLOBAL_INTRADAY_SYMBOLS,
+    collect_global_intraday,
     collect_kospi200_intraday,
     collect_us_stock_intraday,
 )
 from sync.kospi200_symbols_sync import get_symbol_list, sync_kospi200_symbols
 
-DEFAULT_US_SYMBOLS = ["SPY", "QQQ", "IWM", "XLK", "XLF", "TLT", "GLD", "IBIT"]
+DEFAULT_US_SYMBOLS = ["SPY", "QQQ", "IWM", "XLK", "XLF", "TLT", "GLD", "IBIT", "NQ=F", "ES=F"]
+DEFAULT_GLOBAL_INTRADAY_SYMBOLS = list(GLOBAL_INTRADAY_SYMBOLS)
 
 
 def _previous_weekday(base_date: date) -> date:
@@ -51,11 +54,20 @@ async def collect_us_intraday_task(target_date: date, symbols: list[str]) -> Non
     await collect_us_stock_intraday(trade_date=target_date, symbols=symbols)
 
 
+@task(name="Collect Global/Crypto Intraday (Yahoo)", retries=2, retry_delay_seconds=60)
+async def collect_global_intraday_task(target_date: date, symbols: list[str]) -> None:
+    logger = get_run_logger()
+    logger.info(f"Collecting global/crypto 1-min data via yfinance for {target_date}: {symbols}")
+    await collect_global_intraday(trade_date=target_date, symbols=symbols)
+
+
 @flow(name="Daily-Yahoo-Intraday-Flow")
 async def daily_yahoo_intraday_flow(
     kr_target_date: date | None = None,
     us_target_date: date | None = None,
     us_symbols: list[str] | None = None,
+    global_target_date: date | None = None,
+    global_symbols: list[str] | None = None,
 ):
     """
     하루 1회 실행되는 yfinance 1분봉 수집 플로우.
@@ -70,12 +82,15 @@ async def daily_yahoo_intraday_flow(
     today = date.today()
     resolved_kr_date = kr_target_date or _previous_weekday(today)
     resolved_us_date = us_target_date or _previous_weekday(today)
+    resolved_global_date = global_target_date or today
     resolved_us_symbols = us_symbols or DEFAULT_US_SYMBOLS
+    resolved_global_symbols = global_symbols or DEFAULT_GLOBAL_INTRADAY_SYMBOLS
 
     logger.info(
         "Starting Daily Yahoo Intraday Flow "
         f"(kr_target_date={resolved_kr_date}, us_target_date={resolved_us_date}, "
-        f"us_symbols={resolved_us_symbols})"
+        f"global_target_date={resolved_global_date}, us_symbols={resolved_us_symbols}, "
+        f"global_symbols={resolved_global_symbols})"
     )
 
     notifier = Notifier()
@@ -85,7 +100,8 @@ async def daily_yahoo_intraday_flow(
     await notifier.notify_all(
         "🚀 *[Market Data]* "
         f"Yahoo 1분봉 수집 시작: KOSPI200={resolved_kr_date}, "
-        f"US={resolved_us_date} ({', '.join(resolved_us_symbols)})"
+        f"US={resolved_us_date} ({', '.join(resolved_us_symbols)}), "
+        f"Global/Crypto={resolved_global_date} ({', '.join(resolved_global_symbols)})"
     )
 
     try:
@@ -109,10 +125,14 @@ async def daily_yahoo_intraday_flow(
         current_step = "collect_us_intraday"
         await collect_us_intraday_task(resolved_us_date, resolved_us_symbols)
 
+        current_step = "collect_global_intraday"
+        await collect_global_intraday_task(resolved_global_date, resolved_global_symbols)
+
         msg = (
             "✅ *[Market Data]* Yahoo 1분봉 수집 완료: "
             f"KOSPI200={resolved_kr_date}, "
-            f"US={resolved_us_date} ({', '.join(resolved_us_symbols)})\n"
+            f"US={resolved_us_date} ({', '.join(resolved_us_symbols)}), "
+            f"Global/Crypto={resolved_global_date} ({', '.join(resolved_global_symbols)})\n"
             f"• kospi200_component_source: {component_source}"
         )
         logger.info(msg)
@@ -121,7 +141,8 @@ async def daily_yahoo_intraday_flow(
         error_msg = (
             "❌ *[Market Data]* Yahoo 1분봉 수집 실패: "
             f"KOSPI200={resolved_kr_date}, "
-            f"US={resolved_us_date} ({', '.join(resolved_us_symbols)})\n"
+            f"US={resolved_us_date} ({', '.join(resolved_us_symbols)}), "
+            f"Global/Crypto={resolved_global_date} ({', '.join(resolved_global_symbols)})\n"
             f"• step: {current_step}\n"
             f"• kospi200_component_source: {component_source}\n"
             f"• error_type: {type(exc).__name__}\n"

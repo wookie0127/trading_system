@@ -1,0 +1,10 @@
+llm:
+  provider: "google-genai"
+  model_name: "gemini-2.5-flash"  # or gemini-1.5-flash / gemini-2.0-flash / gemini-2.5-flash depending on current SDK model alias
+  temperature: 0.2
+  top_p: 0.95
+  max_output_tokens: 2048
+  timeout_seconds: 30
+  retry_attempts: 3
+  prompt_version: "v1.0"
+  strategy_file: "configs/strategies/btc_4h_adaptive.md"

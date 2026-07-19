@@ -1,6 +1,6 @@
 """
 collectors/crypto/ — 암호화폐 데이터 수집기
-  - bitcoin: Binance 1분봉
+  - bitcoin: Binance 1분봉 (BTCUSDT, ETHUSDT)
 """
 import sys
 from pathlib import Path

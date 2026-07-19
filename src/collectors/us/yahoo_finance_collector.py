@@ -12,6 +12,8 @@ KIS API 없이 yfinance만으로 수집 가능한 데이터:
 
 저장 경로 (parquet_writer 키):
   nasdaq_1min        → market_data/us/nasdaq/1min/<YYYY-MM-DD>.parquet
+  global_1min        → market_data/global/1min/<YYYY-MM-DD>.parquet
+  crypto_1min        → market_data/crypto/1min/<YYYY-MM-DD>.parquet
   kospi200_1min      → market_data/kr/kospi200/1min/<YYYY-MM-DD>.parquet
   kospi200_daily_yf  → market_data/kr/kospi200/daily/<YYYY-MM-DD>.parquet  (일봉 전용)
 
@@ -54,6 +56,8 @@ US_INDICES: dict[str, str] = {
     "^IXIC": "nasdaq_1min",   # NASDAQ Composite
     "^NDX":  "nasdaq_1min",   # NASDAQ 100  (같은 폴더에 함께 저장)
     "^GSPC": "nasdaq_1min",   # S&P 500
+    "NQ=F":  "nasdaq_1min",   # NASDAQ Futures
+    "ES=F":  "nasdaq_1min",   # S&P 500 Futures
 }
 
 # 수집 대상 US 일봉 (지수, ETF 등)
@@ -62,6 +66,8 @@ US_DAILY_SYMBOLS: list[str] = [
     "^NDX",   # NASDAQ 100
     "^GSPC",  # S&P 500
     "QQQ",    # Invesco QQQ Trust
+    "NQ=F",   # NASDAQ Futures
+    "ES=F",   # S&P 500 Futures
 ]
 
 # 글로벌 자산 (환율, 원자재, 변동성, 암호화폐)
@@ -76,6 +82,16 @@ GLOBAL_ASSETS: dict[str, str] = {
     "ETH-USD":  "crypto_eth",   # 이더리움
 }
 
+# 장마감 후 같이 수집할 글로벌 1분봉 대상.
+# DX-Y.NYB가 환경에 따라 비어 있을 수 있어 달러인덱스 선물(DX=F)도 함께 둔다.
+GLOBAL_INTRADAY_SYMBOLS: dict[str, str] = {
+    "BTC-USD": "crypto_1min",
+    "ETH-USD": "crypto_1min",
+    "DX-Y.NYB": "global_1min",
+    "DX=F": "global_1min",
+    "USDKRW=X": "global_1min",
+}
+
 # yfinance 1분봉 제약
 _MAX_DAYS_PER_CHUNK = 7
 
@@ -86,6 +102,8 @@ _PARQUET_WRITER_PATHS: dict[str, Path] = {
     "nasdaq_1min":           MARKET_DATA_DIR / "us" / "nasdaq" / "1min",
     "us_daily":              MARKET_DATA_DIR / "us" / "daily",
     "global_daily":          MARKET_DATA_DIR / "global" / "daily",
+    "global_1min":           MARKET_DATA_DIR / "global" / "1min",
+    "crypto_1min":           MARKET_DATA_DIR / "crypto" / "1min",
     "kospi200_1min":         MARKET_DATA_DIR / "kr" / "kospi200" / "1min",
     "kospi200_daily_yf":     MARKET_DATA_DIR / "kr" / "kospi200" / "daily",
 }
@@ -418,6 +436,50 @@ async def collect_global_assets(
     logger.success("글로벌 자산 저장 완료")
 
 
+async def collect_global_intraday(
+    trade_date: date | None = None,
+    symbols: list[str] | None = None,
+) -> None:
+    """
+    코인, 달러지수/달러인덱스, 환율 1분봉 수집.
+
+    저장 경로:
+      - crypto_1min: BTC-USD, ETH-USD
+      - global_1min: DX-Y.NYB, DX=F, USDKRW=X 등
+    """
+    if trade_date is None:
+        trade_date = date.today()
+
+    target_symbols = [s.strip().upper() for s in (symbols or list(GLOBAL_INTRADAY_SYMBOLS)) if s and s.strip()]
+    if not target_symbols:
+        logger.error("수집할 글로벌 1분봉 심볼이 없습니다.")
+        return
+
+    logger.info(f"글로벌/코인 1분봉 (Yahoo) {trade_date}: {target_symbols}")
+
+    total_rows_by_key: dict[str, int] = {}
+    for i, batch in enumerate(_batches(target_symbols, _BATCH_SIZE), 1):
+        logger.debug(f"  글로벌 1분봉 배치 {i}: {batch}")
+
+        df = await asyncio.to_thread(_download_1min, batch, trade_date, trade_date)
+        if df.empty:
+            logger.warning(f"  글로벌 1분봉 배치 {i}: 데이터 없음")
+            continue
+
+        df = validate_intraday(df)
+        if df.empty:
+            continue
+
+        for storage_key, key_df in df.groupby(df["symbol"].map(lambda sym: GLOBAL_INTRADAY_SYMBOLS.get(sym, "global_1min"))):
+            dest = daily_path(storage_key, str(trade_date))
+            write_parquet(key_df.reset_index(drop=True), dest)
+            total_rows_by_key[storage_key] = total_rows_by_key.get(storage_key, 0) + len(key_df)
+
+        await asyncio.sleep(1.0)
+
+    logger.success(f"글로벌/코인 1분봉 저장 완료: {total_rows_by_key}")
+
+
 # ──────────────────────────────────────────────
 # KOSPI200 1분봉 수집
 # ──────────────────────────────────────────────
@@ -633,6 +695,7 @@ if __name__ == "__main__":
   us_indices        US 지수 1분봉 (^IXIC, ^NDX, ^GSPC)
   us_daily          US 지수 및 ETF 일봉 (장기 히스토리, --start 필수)
   global_daily      글로벌 자산(FX/원자재/코인) 일봉 (장기 히스토리, --start 필수)
+  global_intraday   글로벌/코인 1분봉 (BTC-USD, ETH-USD, DX-Y.NYB, DX=F, USDKRW=X)
   kospi200_intraday KOSPI200 종목 1분봉
   kospi200_daily    KOSPI200 종목 일봉 (장기 히스토리, --start 필수)
 
@@ -650,7 +713,7 @@ if __name__ == "__main__":
     parser.add_argument("--end", default=None, help="종료 날짜 YYYY-MM-DD")
     parser.add_argument(
         "--step",
-        choices=["us_indices", "us_daily", "global_daily", "kospi200_intraday", "kospi200_daily"],
+        choices=["us_indices", "us_daily", "global_daily", "global_intraday", "kospi200_intraday", "kospi200_daily"],
         default=None,
         help="단일 스텝 실행",
     )
@@ -684,6 +747,8 @@ if __name__ == "__main__":
             parser.error("--step global_daily 는 --start 날짜가 필요합니다.")
         assert _start is not None
         asyncio.run(collect_global_assets(start=_start, end=_end, symbols=_symbols))
+    elif args.step == "global_intraday":
+        asyncio.run(collect_global_intraday(trade_date=_trade_date, symbols=_symbols))
     elif args.step == "kospi200_intraday":
         asyncio.run(collect_kospi200_intraday(trade_date=_trade_date))
     elif args.step == "kospi200_daily":

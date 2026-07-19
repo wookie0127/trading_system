@@ -3,7 +3,7 @@ from pathlib import Path
 
 import polars as pl
 
-from strategies.app import load_intraday_window, summarize_period_returns
+from data.market_data import load_intraday_window, summarize_period_returns
 
 
 def test_streamlit_app_helpers_load_and_summarize_period_returns(tmp_path):

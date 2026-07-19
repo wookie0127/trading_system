@@ -4,8 +4,8 @@ import polars as pl
 
 from backtest.engine import run_backtest, run_batch_backtests
 from backtest.result import BacktestResult
-from strategies.custom_backtest_app import label_symbol, load_ohlcv
-from strategy.registry import STRATEGY_REGISTRY, get_strategy_spec, instantiate_strategy
+from data.market_data import label_symbol, load_ohlcv
+from strategies.registry import STRATEGY_REGISTRY, get_strategy_spec, instantiate_strategy
 
 
 def test_run_backtest_returns_result_with_trades_and_equity():
@@ -88,7 +88,7 @@ def test_label_symbol_normalizes_kr_symbols():
 
 def test_strategy_registry_exposes_dynamic_parameter_spec():
     spec = get_strategy_spec("moving_average_cross")
-    strategy = instantiate_strategy(spec)
+    strategy = instantiate_strategy(spec, {})
 
     assert STRATEGY_REGISTRY["moving_average_cross"].name == "Moving Average Cross"
     assert [parameter.key for parameter in spec.parameters] == ["fast_window", "slow_window"]

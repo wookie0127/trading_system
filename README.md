@@ -168,7 +168,7 @@ TLEADING_INVEST_REVIEW_CHANNEL_NAME: "📊-매매-복기"
 
 ### 📰 아침 뉴스 브리핑
 
-월~금 오전 7시(KST)에 RSS 헤드라인을 수집한 뒤 OpenAI, Codex CLI, Gemini 중 하나로 한국어 Markdown 브리핑을 생성해 저장할 수 있습니다.
+월~금 오전 7시(KST)에 RSS 헤드라인을 수집한 뒤 OpenAI API, Gemini API, Codex CLI, agy CLI, cmux에 떠 있는 Gemini pane 중 하나로 한국어 Markdown 브리핑을 생성해 저장할 수 있습니다.
 
 - 기본 저장 경로: `data/news_summaries/YYYY-MM-DD.md`
 - 기본 백엔드: `openai`
@@ -183,10 +183,14 @@ OPENAI_API_KEY=your_openai_api_key
 OPENAI_MODEL=gpt-5-mini
 CODEX_CLI_COMMAND=codex
 CODEX_MODEL=
-GEMINI_CLI_COMMAND=gemini
+AGY_CLI_COMMAND=agy
+AGY_MODEL=
+GEMINI_API=your_gemini_api_key
 GEMINI_MODEL=gemini-2.5-flash
-GEMINI_APPROVAL_MODE=yolo
 GEMINI_TIMEOUT_SECONDS=180
+CMUX_COMMAND=cmux
+CMUX_GEMINI_WORKSPACE=workspace:1
+CMUX_GEMINI_SURFACE=surface:2
 NEWS_RSS_FEEDS=https://news.google.com/rss?hl=ko&gl=KR&ceid=KR:ko,https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=ko&gl=KR&ceid=KR:ko,https://news.google.com/rss/headlines/section/topic/WORLD?hl=ko&gl=KR&ceid=KR:ko
 NEWS_SUMMARY_DIR=data/news_summaries
 NEWS_MAX_ITEMS=20
@@ -196,6 +200,22 @@ NEWS_MAX_ITEMS=20
 
 ```bash
 uv run python src/news/daily_news_orchestrator.py
+```
+
+cmux 우측 pane에 이미 실행 중인 Gemini를 쓰려면 먼저 대상 surface를 확인합니다.
+
+```bash
+cmux tree
+cmux read-screen --surface surface:2 --scrollback --lines 20
+NEWS_LLM_BACKEND=cmux-gemini CMUX_GEMINI_SURFACE=surface:2 uv run python src/news/daily_news_orchestrator.py
+```
+
+`CMUX_GEMINI_WORKSPACE`를 생략하면 현재 cmux 터미널의 workspace가 기본값으로 사용됩니다. 자동화는 prompt를 Gemini pane에 붙여넣고, 응답 마지막의 완료 마커를 감지한 뒤 Markdown 본문만 저장합니다.
+
+agy CLI를 쓰려면 `agy --print`가 동작하는 로그인/설정 상태에서 백엔드를 바꿉니다.
+
+```bash
+NEWS_LLM_BACKEND=agy uv run python src/news/daily_news_orchestrator.py
 ```
 
 Prefect 배포:
@@ -208,9 +228,9 @@ uv run prefect deploy src/news/daily_news_orchestrator.py:daily_news_summary_flo
   --pool "default-agent-pool"
 ```
 
-### 📰 Gemini CLI 아침 뉴스 브리핑
+### 📰 Gemini API 아침 뉴스 브리핑
 
-Gemini CLI로 요약한 뒤 Obsidian Markdown으로 저장할 수 있습니다. 이 flow는 Gemini API 키를 코드에서 직접 쓰지 않고, 이미 로그인된 Gemini CLI 세션을 사용합니다.
+Gemini API로 요약한 뒤 Obsidian Markdown으로 저장할 수 있습니다. API 키는 `~/.ssh/apikeys`의 `GEMINI_API`를 기본으로 읽고, `GEMINI_API_KEY` 또는 `GOOGLE_API_KEY`도 호환됩니다.
 
 - 기본 저장 경로: `~/Documents/Obsidian Vault/TradingSystem/뉴스요약/YYYY-MM-DD.md`
 - 기본 모델: `gemini-2.5-flash`
@@ -219,23 +239,14 @@ Gemini CLI로 요약한 뒤 Obsidian Markdown으로 저장할 수 있습니다. 
 필수 환경변수:
 
 ```bash
-GEMINI_CLI_COMMAND=gemini
+GEMINI_API=your_gemini_api_key
 GEMINI_MODEL=gemini-2.5-flash
-GEMINI_APPROVAL_MODE=yolo
 GEMINI_TIMEOUT_SECONDS=180
 OBSIDIAN_VAULT_DIR=obsidian
 NEWS_OBSIDIAN_SUBDIR=뉴스요약
 ```
 
-사전 준비:
-
-```bash
-gemini
-# 로그인 완료 후 종료
-```
-
-실행 시 Gemini CLI에는 `뉴스요약해줘`로 시작하는 프롬프트와 RSS 헤드라인 목록이 함께 전달됩니다.
-Docker worker에서도 같은 로그인 세션을 쓰기 위해 `docker-compose.yml`에서 호스트의 `${HOME}/.gemini`를 `/root/.gemini`로 마운트합니다.
+실행 시 Gemini API에는 `뉴스요약해줘`로 시작하는 프롬프트와 RSS 헤드라인 목록이 함께 전달됩니다.
 
 수동 실행:
 
@@ -286,7 +297,7 @@ uv run python src/follow_telegram_leading/orchestrator.py serve \
 - 자동 매수 리스크 제한은 `TLEADING_LLM_AUTO_MAX_BUYS_PER_DAY=3`, `TLEADING_LLM_AUTO_MAX_ACTIVE_POSITIONS=5`, `TLEADING_LLM_AUTO_SYMBOL_COOLDOWN_MINUTES=60`으로 조정합니다.
 - LLM은 매수 후보를 `daytrade`(단타), `swing`(스윙), `unknown`으로 분류하며, 단타/스윙은 각각 `TLEADING_LLM_DAYTRADE_BUY_MIN_CONFIDENCE=0.85`, `TLEADING_LLM_SWING_BUY_MIN_CONFIDENCE=0.90` 기준을 사용합니다.
 - 스타일별 기본 손절률은 `TLEADING_DAYTRADE_STOP_LOSS_PCT=3%`, `TLEADING_SWING_STOP_LOSS_PCT=7%`로 조정합니다.
-- 모든 LLM 판단은 `data/follow_telegram_leading/investment_journal.jsonl`에 기록하고, 매일 `TLEADING_DAILY_REVIEW_TIME=15:45` 이후 단타/스윙 성과 복기를 Markdown으로 작성합니다.
+- 모든 LLM 판단은 `data/follow_telegram_leading/investment_journal.jsonl`에 기록하고, 매일 `TLEADING_DAILY_REVIEW_TIME=23:00` 이후 단타/스윙 성과 복기를 Markdown으로 한 번 작성합니다.
 - 복기 Markdown 기본 저장 경로는 `TLEADING_OBSIDIAN_DIARY_DIR="/Users/giwooklee/Documents/Obsidian Vault/TradingSystem/invest_diary"`이며, Docker에서는 `/app/obsidian/invest_diary`로 마운트해 같은 Obsidian vault에 기록합니다.
 
 코스피 선물 관련 기본값:
@@ -389,12 +400,12 @@ uv run prefect worker start --pool "default-agent-pool"
 
 #### 4단계: 스케줄 배포
 
-한국시간 기준 월~금 새벽 6시 30분에 직전 한국장 KOSPI200과 직전 미국장 ETF 바스켓 `SPY / QQQ / IWM / XLK / XLF / TLT / GLD / IBIT` 1분봉을 함께 수집하도록 배포합니다.
+한국시간 기준 월~금 오후 4시 10분에 한국장 종료 후 KOSPI200, 직전 미국장 ETF 바스켓 `SPY / QQQ / IWM / XLK / XLF / TLT / GLD / IBIT / NQ=F / ES=F`, 코인/달러 지표 `BTC-USD / ETH-USD / DX-Y.NYB / DX=F / USDKRW=X` 1분봉을 함께 수집하도록 배포합니다.
 
 ```bash
 uv run prefect deploy src/pipelines/daily_yahoo_intraday_orchestrator.py:daily_yahoo_intraday_flow \
   --name "Daily-Yahoo-Intraday" \
-  --cron "30 6 * * 1-5" \
+  --cron "10 16 * * 1-5" \
   --timezone "Asia/Seoul" \
   --pool "default-agent-pool"
 

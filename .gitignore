@@ -20,6 +20,8 @@ access_token.json
 access_token.*.json
 token.dat
 trading_data.db
+trading_system.db
+*.db
 src/follow_tleading_reading/*.session*
 src/follow_tleading_reading/chats.yaml
 src/follow_telegram_leading/*.session*

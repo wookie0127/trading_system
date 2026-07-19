@@ -135,6 +135,7 @@ services:
       - TLEADING_KOSPI_FUTURES_MODE=tracking
       - TLEADING_KOSPI_FUTURES_TRACK_ONLY=true
       - TLEADING_KOSPI_FUTURES_CHANNEL_ID=1521633631976820746
+      - TLEADING_DAILY_REVIEW_TIME=23:00
       - TLEADING_OBSIDIAN_DIARY_DIR=/app/obsidian/invest_diary
     env_file:
       - path: .env

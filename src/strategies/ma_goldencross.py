@@ -21,6 +21,7 @@ class MovingAverageGoldenCrossStrategy:
         self,
         short_ma_period: int = DEFAULT_SHORT_MA_PERIOD,
         long_ma_period: int = DEFAULT_LONG_MA_PERIOD,
+        **kwargs
     ):
         if short_ma_period <= 0:
             raise ValueError("short_ma_period must be positive.")

@@ -37,26 +37,29 @@ def build_symbol_figure(frame: pl.DataFrame, short_ma: int, long_ma: int) -> go.
         rows=2,
         cols=1,
         shared_xaxes=True,
-        row_heights=[0.7, 0.3],
+        row_heights=[0.75, 0.25],
         vertical_spacing=0.05,
     )
 
+    # 1. Price Line (Slate Gray)
     fig.add_trace(
         go.Scatter(
             x=signal_frame["timestamp"],
             y=signal_frame["close"],
-            name="Close",
-            line=dict(color="#1f77b4", width=1.6),
+            name="Price (Close)",
+            line=dict(color="#2c3e50", width=1.5),
         ),
         row=1,
         col=1,
     )
+
+    # 2. Moving Averages (Blue and Orange)
     fig.add_trace(
         go.Scatter(
             x=signal_frame["timestamp"],
             y=signal_frame["short_ma"],
             name=f"MA {short_ma}",
-            line=dict(color="#ff7f0e", width=1.4),
+            line=dict(color="#2962ff", width=1.2),
         ),
         row=1,
         col=1,
@@ -66,12 +69,13 @@ def build_symbol_figure(frame: pl.DataFrame, short_ma: int, long_ma: int) -> go.
             x=signal_frame["timestamp"],
             y=signal_frame["long_ma"],
             name=f"MA {long_ma}",
-            line=dict(color="#2ca02c", width=1.4),
+            line=dict(color="#ff9800", width=1.2),
         ),
         row=1,
         col=1,
     )
 
+    # 3. Small Trade Markers (Neon Green and Neon Red)
     buy_points = signal_frame.filter(pl.col("buy_signal") == True)  # noqa: E712
     sell_points = signal_frame.filter(pl.col("sell_signal") == True)  # noqa: E712
 
@@ -82,7 +86,12 @@ def build_symbol_figure(frame: pl.DataFrame, short_ma: int, long_ma: int) -> go.
                 y=buy_points["close"],
                 mode="markers",
                 name="Buy Signal",
-                marker=dict(symbol="triangle-up", size=10, color="#00cc96"),
+                marker=dict(
+                    symbol="triangle-up",
+                    size=8,
+                    color="#00e676",
+                    line=dict(width=1.5, color="#ffffff")
+                ),
             ),
             row=1,
             col=1,
@@ -94,19 +103,29 @@ def build_symbol_figure(frame: pl.DataFrame, short_ma: int, long_ma: int) -> go.
                 y=sell_points["close"],
                 mode="markers",
                 name="Sell Signal",
-                marker=dict(symbol="triangle-down", size=10, color="#ef553b"),
+                marker=dict(
+                    symbol="triangle-down",
+                    size=8,
+                    color="#ff1744",
+                    line=dict(width=1.5, color="#ffffff")
+                ),
             ),
             row=1,
             col=1,
         )
 
+    # 4. Volume overlay (color coded)
+    vol_colors = [
+        "#00e676" if c >= o else "#ff1744"
+        for c, o in zip(signal_frame["close"].to_list(), signal_frame["open"].to_list())
+    ]
     fig.add_trace(
         go.Bar(
             x=signal_frame["timestamp"],
             y=signal_frame["volume"],
             name="Volume",
-            marker_color="#8c8c8c",
-            opacity=0.6,
+            marker_color=vol_colors,
+            opacity=0.2,
         ),
         row=2,
         col=1,
@@ -115,9 +134,31 @@ def build_symbol_figure(frame: pl.DataFrame, short_ma: int, long_ma: int) -> go.
     fig.update_layout(
         height=780,
         template="plotly_white",
-        legend_orientation="h",
-        legend_y=1.02,
+        font=dict(family="'Trebuchet MS', 'Inter', sans-serif", size=11, color="#373d49"),
+        plot_bgcolor="#ffffff",
+        paper_bgcolor="#ffffff",
         margin=dict(l=30, r=20, t=40, b=30),
+        hovermode="x unified",
+        xaxis=dict(
+            gridcolor="#f0f3fa",
+            linecolor="#e0e3eb",
+            showline=True,
+        ),
+        yaxis=dict(
+            gridcolor="#f0f3fa",
+            linecolor="#e0e3eb",
+            showline=True,
+        ),
+        xaxis2=dict(
+            gridcolor="#f0f3fa",
+            linecolor="#e0e3eb",
+            showline=True,
+        ),
+        yaxis2=dict(
+            gridcolor="#f0f3fa",
+            linecolor="#e0e3eb",
+            showline=True,
+        )
     )
     return fig
 

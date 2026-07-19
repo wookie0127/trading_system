@@ -18,6 +18,7 @@ _PATHS = {
     "us_stock_1min":         MARKET_DATA_DIR / "us" / "stock" / "1min",
     "us_daily":              MARKET_DATA_DIR / "us" / "daily",
     "global_daily":          MARKET_DATA_DIR / "global" / "daily",
+    "global_1min":           MARKET_DATA_DIR / "global" / "1min",
     "kospi200_1min":         MARKET_DATA_DIR / "kr" / "kospi200" / "1min",
     "kr_stock_1min":         MARKET_DATA_DIR / "kr" / "stock" / "1min",
     "kr_stock_daily":        MARKET_DATA_DIR / "kr" / "stock" / "daily",
@@ -26,6 +27,7 @@ _PATHS = {
     "kospi200_daily_yf":     MARKET_DATA_DIR / "kr" / "kospi200" / "daily",
     "kospi200_components":   MARKET_DATA_DIR / "metadata" / "kospi200_components",
     "us_stock_daily":        MARKET_DATA_DIR / "us" / "stock" / "daily",
+    "crypto_1min":           MARKET_DATA_DIR / "crypto" / "1min",
 }
 
 

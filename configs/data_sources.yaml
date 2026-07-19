@@ -1,0 +1,4 @@
+data_sources:
+  candles_db: "trading_data.db"
+  freshness_threshold_seconds: 14400 # 4 hours
+  stale_data_policy: "fail_closed"

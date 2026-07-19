@@ -30,9 +30,12 @@ SRC_DIR = CURRENT_DIR.parents[1]
 if str(SRC_DIR) not in sys.path:
     sys.path.append(str(SRC_DIR))
 
+from news.cmux_gemini import run_cmux_gemini_pane
+
 # 환경 설정 로드
 KEY_PATH = Path.home() / ".ssh" / "kis"
 load_dotenv(str(KEY_PATH))
+load_dotenv(str(Path.home() / ".ssh" / "apikeys"))
 load_dotenv(str(SRC_DIR / ".env"))
 
 DEFAULT_FEEDS = [
@@ -44,9 +47,10 @@ DEFAULT_BACKEND = "openai"
 DEFAULT_OPENAI_MODEL = "gpt-5-mini"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_CODEX_MODEL = ""
-DEFAULT_GEMINI_COMMAND = "gemini"
+DEFAULT_AGY_MODEL = ""
 DEFAULT_CODEX_COMMAND = "codex"
-DEFAULT_APPROVAL_MODE = "yolo"
+DEFAULT_AGY_COMMAND = "agy"
+DEFAULT_CMUX_COMMAND = "cmux"
 DEFAULT_TIMEOUT_SECONDS = 180
 DEFAULT_OUTPUT_DIR = Path("data/news_summaries")
 DEFAULT_OBSIDIAN_SUBDIR = "뉴스요약"
@@ -193,50 +197,62 @@ async def summarize_with_openai(model: str, prompt: str) -> str:
 
 
 # ==========================================
-# 2. Gemini CLI 백엔드 요약 기능
+# 2. Gemini 백엔드 요약 기능
 # ==========================================
-def run_gemini_cli(prompt: str, command: str, model: str, approval_mode: str, timeout_seconds: int) -> str:
-    command_parts = shlex.split(command)
-    executable = command_parts[0]
-    if shutil.which(executable) is None and not Path(executable).exists():
-        raise RuntimeError(f"Gemini CLI executable not found: {executable}")
+def _gemini_api_key() -> str:
+    api_key = os.getenv("GEMINI_API") or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API, GEMINI_API_KEY, or GOOGLE_API_KEY is required for NEWS_LLM_BACKEND=gemini")
+    return api_key
 
-    cli_args = command_parts + [
-        "--prompt",
-        prompt,
-        "--output-format",
-        "text",
-        "--approval-mode",
-        approval_mode,
-    ]
-    if model:
-        cli_args.extend(["--model", model])
 
-    gemini_home = Path.home() / ".gemini"
-    run_cwd = gemini_home if gemini_home.exists() else Path.cwd()
+def _extract_gemini_text(payload: dict) -> str:
+    candidates = payload.get("candidates") or []
+    if not candidates:
+        raise RuntimeError("Gemini API response did not include candidates")
 
-    completed = subprocess.run(
-        cli_args,
-        capture_output=True,
-        text=True,
-        timeout=timeout_seconds,
-        check=False,
-        cwd=run_cwd,
-    )
-    if completed.returncode != 0:
-        raise RuntimeError(
-            "Gemini CLI failed with exit status "
-            f"{completed.returncode}: {completed.stderr.strip() or completed.stdout.strip()}"
+    parts = candidates[0].get("content", {}).get("parts") or []
+    return "".join(str(part.get("text") or "") for part in parts).strip()
+
+
+async def summarize_with_gemini_api(model: str, prompt: str, timeout_seconds: int) -> str:
+    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    payload = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": prompt}],
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.2,
+            "responseMimeType": "text/plain",
+        },
+    }
+
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        response = await client.post(
+            endpoint,
+            params={"key": _gemini_api_key()},
+            json=payload,
         )
 
-    output = completed.stdout.strip()
-    if not output:
-        raise RuntimeError("Gemini CLI returned empty output")
-    return output
+    if response.status_code != 200:
+        try:
+            error_payload = response.json().get("error", {})
+            detail = error_payload.get("message") or response.text[:500]
+        except Exception:
+            detail = response.text[:500]
+        raise RuntimeError(f"Gemini API request failed: HTTP {response.status_code}: {detail}")
+
+    summary = _extract_gemini_text(response.json())
+    if not summary:
+        raise RuntimeError("Gemini API response did not include text")
+    return summary
 
 
 # ==========================================
-# 3. Codex CLI 백엔드 요약 기능
+# 3. CLI 백엔드 요약 기능
 # ==========================================
 def run_codex_cli(prompt: str, command: str, model: str, timeout_seconds: int) -> str:
     command_parts = shlex.split(command)
@@ -279,6 +295,42 @@ def run_codex_cli(prompt: str, command: str, model: str, timeout_seconds: int) -
     output = completed.stdout.strip()
     if not output:
         raise RuntimeError("Codex CLI returned empty output")
+    return output
+
+
+def run_agy_cli(prompt: str, command: str, model: str, timeout_seconds: int) -> str:
+    command_parts = shlex.split(command)
+    executable = command_parts[0]
+    if shutil.which(executable) is None and not Path(executable).exists():
+        raise RuntimeError(f"agy CLI executable not found: {executable}")
+
+    cli_args = command_parts[:]
+    if model:
+        cli_args.extend(["--model", model])
+    cli_args.extend([
+        "--sandbox",
+        "--print",
+        prompt,
+        "--print-timeout",
+        f"{timeout_seconds}s",
+    ])
+
+    completed = subprocess.run(
+        cli_args,
+        capture_output=True,
+        text=True,
+        timeout=timeout_seconds + 10,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "agy CLI failed with exit status "
+            f"{completed.returncode}: {completed.stderr.strip() or completed.stdout.strip()}"
+        )
+
+    output = completed.stdout.strip()
+    if not output:
+        raise RuntimeError("agy CLI returned empty output")
     return output
 
 
@@ -443,9 +495,11 @@ async def summarize_news_task(
     model: str,
     run_date: str,
     style: str,
-    gemini_command: str,
     codex_command: str,
-    approval_mode: str,
+    agy_command: str,
+    cmux_command: str,
+    cmux_workspace: str | None,
+    cmux_surface: str | None,
     timeout_seconds: int,
 ) -> str:
     logger = get_run_logger()
@@ -458,17 +512,26 @@ async def summarize_news_task(
     if backend == "openai":
         return await summarize_with_openai(model=model, prompt=prompt)
     elif backend == "gemini":
-        return run_gemini_cli(
+        return await summarize_with_gemini_api(model=model, prompt=prompt, timeout_seconds=timeout_seconds)
+    elif backend == "cmux-gemini":
+        return run_cmux_gemini_pane(
             prompt=prompt,
-            command=gemini_command,
-            model=model,
-            approval_mode=approval_mode,
+            workspace=cmux_workspace,
+            surface=cmux_surface,
+            cmux_command=cmux_command,
             timeout_seconds=timeout_seconds,
         )
     elif backend == "codex":
         return run_codex_cli(
             prompt=prompt,
             command=codex_command,
+            model=model,
+            timeout_seconds=timeout_seconds,
+        )
+    elif backend == "agy":
+        return run_agy_cli(
+            prompt=prompt,
+            command=agy_command,
             model=model,
             timeout_seconds=timeout_seconds,
         )
@@ -538,6 +601,10 @@ async def daily_news_summary_flow(
     prompt_style: str | None = None,
     gemini_command: str | None = None,
     codex_command: str | None = None,
+    agy_command: str | None = None,
+    cmux_command: str | None = None,
+    cmux_workspace: str | None = None,
+    cmux_surface: str | None = None,
     approval_mode: str | None = None,
     timeout_seconds: int | None = None,
 ):
@@ -560,16 +627,20 @@ async def daily_news_summary_flow(
 
     if resolved_backend == "openai":
         resolved_model = model or str(_config_value("OPENAI_MODEL", DEFAULT_OPENAI_MODEL))
-    elif resolved_backend == "gemini":
+    elif resolved_backend in {"gemini", "cmux-gemini"}:
         resolved_model = model or str(_config_value("GEMINI_MODEL", DEFAULT_GEMINI_MODEL))
     elif resolved_backend == "codex":
         resolved_model = model or str(_config_value("CODEX_MODEL", DEFAULT_CODEX_MODEL))
+    elif resolved_backend == "agy":
+        resolved_model = model or str(_config_value("AGY_MODEL", DEFAULT_AGY_MODEL))
     else:
         resolved_model = model or ""
 
-    resolved_gemini_cmd = gemini_command or str(_config_value("GEMINI_CLI_COMMAND", DEFAULT_GEMINI_COMMAND))
     resolved_codex_cmd = codex_command or str(_config_value("CODEX_CLI_COMMAND", DEFAULT_CODEX_COMMAND))
-    resolved_approval_mode = approval_mode or str(_config_value("GEMINI_APPROVAL_MODE", DEFAULT_APPROVAL_MODE))
+    resolved_agy_cmd = agy_command or str(_config_value("AGY_CLI_COMMAND", DEFAULT_AGY_COMMAND))
+    resolved_cmux_cmd = cmux_command or str(_config_value("CMUX_COMMAND", DEFAULT_CMUX_COMMAND))
+    resolved_cmux_workspace = cmux_workspace or os.getenv("CMUX_GEMINI_WORKSPACE") or NEWS_CONFIGS.get("CMUX_GEMINI_WORKSPACE")
+    resolved_cmux_surface = cmux_surface or os.getenv("CMUX_GEMINI_SURFACE") or NEWS_CONFIGS.get("CMUX_GEMINI_SURFACE")
     resolved_timeout = timeout_seconds or int(_config_value("TIMEOUT_SECONDS", _config_value("GEMINI_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)))
 
     run_date = arrow.now(tz=_news_timezone().key).format("YYYY-MM-DD")
@@ -587,9 +658,11 @@ async def daily_news_summary_flow(
         model=resolved_model,
         run_date=run_date,
         style=resolved_style,
-        gemini_command=resolved_gemini_cmd,
         codex_command=resolved_codex_cmd,
-        approval_mode=resolved_approval_mode,
+        agy_command=resolved_agy_cmd,
+        cmux_command=resolved_cmux_cmd,
+        cmux_workspace=resolved_cmux_workspace,
+        cmux_surface=resolved_cmux_surface,
         timeout_seconds=resolved_timeout,
     )
 

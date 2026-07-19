@@ -19,4 +19,6 @@ market_data:
     usdkrw: KRW=X
     btc: BTC-USD
     eth: ETH-USD
+    nq: NQ=F
+    es: ES=F
     kospi200_inverse: 114800.KS

@@ -17,7 +17,9 @@ push: null
 
 # pull section allows you to provide instructions for cloning
 # this project in remote locations
-pull: []
+pull:
+- prefect.deployments.steps.set_working_directory:
+    directory: /app
 
 # the deployments section allows you to provide configuration
 # for deploying flows
@@ -26,7 +28,7 @@ deployments:
   version: null
   tags: []
   concurrency_limit: null
-  description: "yfinance 기반 KOSPI200 + 미국 ETF 바스켓 1분봉 일일 수집\n주기: 월~금 오전 6시 30분 (30 6 * * 1-5)"
+  description: "yfinance 기반 KOSPI200 + 미국 ETF 바스켓 + 글로벌/코인 1분봉 일일 수집\n주기: 월~금 한국장 종료 후 오후 4시 10분 (10 16 * * 1-5)"
   entrypoint: src/pipelines/daily_yahoo_intraday_orchestrator.py:daily_yahoo_intraday_flow
   parameters: {}
   work_pool:
@@ -34,7 +36,7 @@ deployments:
     work_queue_name: null
     job_variables: {}
   schedules:
-  - cron: 30 6 * * 1-5
+  - cron: 10 16 * * 1-5
     timezone: Asia/Seoul
     day_or: true
 - name: Naver-Board-Sync
@@ -58,29 +60,26 @@ deployments:
   version: null
   tags: []
   concurrency_limit: null
-  description: "GPT 기반 주요 뉴스 헤드라인 요약 아카이브\n주기: 월~금 오전 7시 (0 7 * * 1-5)"
+  description: "LLM 기반 주요 뉴스 헤드라인 요약 아카이브\n운영 스케줄은 macOS LaunchAgent(com.giwooklee.trading-system.daily-news-agy)에서 agy CLI로 실행"
   entrypoint: src/news/daily_news_orchestrator.py:daily_news_summary_flow
   parameters: {}
   work_pool:
     name: default-agent-pool
     work_queue_name: null
     job_variables: {}
-  schedules:
-  - cron: 0 7 * * 1-5
-    timezone: Asia/Seoul
-    day_or: true
-- name: Daily-News-Summary-Gemini
+  schedules: []
+- name: Gemini-4H-System-Trading
   version: null
-  tags: []
+  tags: ["gemini", "crypto", "btc"]
   concurrency_limit: null
-  description: "Gemini CLI 기반 주요 뉴스 헤드라인 요약 후 Obsidian 저장\n주기: 월~금 오전 7시 (0 7 * * 1-5)"
-  entrypoint: src/news/gemini_news_orchestrator.py:daily_news_summary_gemini_flow
+  description: "Gemini 3.5 Flash 기반 BTCUSDT 4시간봉 자율 의사결정 트레이딩 Prefect Flow"
+  entrypoint: src/trading_system/orchestration/prefect_flow.py:gemini_4h_trading_flow
   parameters: {}
   work_pool:
     name: default-agent-pool
     work_queue_name: null
     job_variables: {}
   schedules:
-  - cron: 0 7 * * 1-5
-    timezone: Asia/Seoul
+  - cron: 0 */4 * * *
+    timezone: UTC
     day_or: true

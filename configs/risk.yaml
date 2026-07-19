@@ -1,0 +1,9 @@
+risk:
+  max_leverage: 2.0
+  max_risk_per_trade_ratio: 0.005  # 0.5% of account balance per trade
+  max_position_ratio: 0.15          # 15% max position allocation
+  max_daily_loss_ratio: 0.02        # 2% daily loss limit -> kill switch
+  max_account_drawdown_ratio: 0.08  # 8% max drawdown limit -> kill switch
+  max_consecutive_losses: 4         # 4 consecutive losses -> pause trading
+  max_open_positions: 1
+  min_reward_risk_ratio: 1.5
