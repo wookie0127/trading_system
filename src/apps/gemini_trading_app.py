@@ -19,11 +19,15 @@ class GeminiTradingApp:
     def __init__(
         self,
         mode: str = "replay",
+        trading_mode: str = "paper",
+        confirm_live: bool = False,
         model_name: str = "gemini-2.5-flash",
         db_path: str = "trading_system.db",
         strategy_path: str = "configs/strategies/btc_4h_adaptive.md",
     ):
         self.mode = mode
+        self.trading_mode = trading_mode
+        self.confirm_live = confirm_live
         self.db_path = db_path
         self.model_name = model_name
         self.strategy_path = strategy_path
@@ -41,7 +45,9 @@ class GeminiTradingApp:
         If max_cycles is None and dates are None, tests all accumulated candles in DB/file.
         """
         logger.info("==================================================")
-        logger.info(" Starting Gemini Trading App via PREFECT FLOW - REPLAY MODE")
+        logger.info(
+            f" Starting Gemini Trading App via PREFECT FLOW - REPLAY MODE (TradingMode: {self.trading_mode})"
+        )
         if start_date or end_date:
             logger.info(f" Date Range: {start_date or 'BEGIN'} ~ {end_date or 'END'}")
         elif max_cycles:
@@ -56,6 +62,8 @@ class GeminiTradingApp:
             end_date=end_date,
             start_idx=start_idx,
             db_path=self.db_path,
+            trading_mode=self.trading_mode,
+            confirm_live=self.confirm_live,
         )
 
         logger.info("==================================================")
@@ -70,13 +78,17 @@ class GeminiTradingApp:
         Runs single 4H decision cycle via Prefect Flow.
         """
         logger.info("==================================================")
-        logger.info(" Starting Gemini Trading App via PREFECT FLOW - SINGLE-SHOT MODE")
+        logger.info(
+            f" Starting Gemini Trading App via PREFECT FLOW - SINGLE-SHOT MODE (TradingMode: {self.trading_mode})"
+        )
         logger.info("==================================================")
 
         res = gemini_4h_trading_flow(
             db_path=self.db_path,
             strategy_path=self.strategy_path,
             model_name=self.model_name,
+            trading_mode=self.trading_mode,
+            confirm_live=self.confirm_live,
         )
 
         logger.info(f"Prefect Flow Result: {res}")
@@ -93,6 +105,18 @@ def main():
         choices=["replay", "single"],
         default="replay",
         help="Execution mode: replay or single",
+    )
+    parser.add_argument(
+        "--trading-mode",
+        type=str,
+        choices=["paper", "live", "shadow"],
+        default="paper",
+        help="Trading execution mode: paper (모의투자), live (실전), or shadow (시뮬레이션)",
+    )
+    parser.add_argument(
+        "--confirm-live",
+        action="store_true",
+        help="Safety confirmation required to execute live trading with real funds",
     )
     parser.add_argument(
         "--cycles",
@@ -124,7 +148,13 @@ def main():
 
     args = parser.parse_args()
 
-    app = GeminiTradingApp(mode=args.mode, model_name=args.model, db_path=args.db)
+    app = GeminiTradingApp(
+        mode=args.mode,
+        trading_mode=args.trading_mode,
+        confirm_live=args.confirm_live,
+        model_name=args.model,
+        db_path=args.db,
+    )
 
     if args.mode == "replay":
         app.run_replay(

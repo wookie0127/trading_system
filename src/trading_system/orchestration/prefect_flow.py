@@ -14,7 +14,11 @@ from src.trading_system.policy.validator import PolicyValidator
 from src.trading_system.risk.sizing import PositionSizer
 from src.trading_system.risk.stop_loss import StopLossCalculator
 from src.trading_system.risk.kill_switch import KillSwitch
-from src.trading_system.execution.shadow import ShadowExecutionAdapter
+
+try:
+    from src.trading_system.execution.factory import get_execution_adapter
+except ImportError:
+    from trading_system.execution.factory import get_execution_adapter
 from src.trading_system.storage.repository import SQLiteRepository
 from src.trading_system.evaluation.outcomes import CounterfactualEvaluator
 
@@ -66,7 +70,7 @@ def validate_policy_and_risk_task(
 @task(name="Execute Shadow Order & Save Audit", cache_policy=NO_CACHE)
 def execute_order_and_save_audit_task(
     db_repo: SQLiteRepository,
-    execution_adapter: ShadowExecutionAdapter,
+    execution_adapter: Any,
     decision_id: str,
     snapshot: Any,
     decision: Any,
@@ -140,8 +144,12 @@ def gemini_4h_trading_flow(
     db_path: str = "trading_system.db",
     strategy_path: str = "configs/strategies/btc_4h_adaptive.md",
     model_name: str = "gemini-2.5-flash",
+    trading_mode: str = "paper",
+    confirm_live: bool = False,
 ) -> Dict[str, Any]:
-    logger.info("Executing Prefect Flow: Gemini 4H Single-Shot Trading Flow")
+    logger.info(
+        f"Executing Prefect Flow: Gemini 4H Single-Shot Trading Flow (Mode: {trading_mode})"
+    )
 
     collector = MarketDataCollector()
     df_4h = collector.load_4h_candles()
@@ -178,7 +186,9 @@ def gemini_4h_trading_flow(
 
     # Task 4: Order Execution & Storage
     db_repo = SQLiteRepository(db_path=db_path)
-    execution_adapter = ShadowExecutionAdapter()
+    execution_adapter = get_execution_adapter(
+        trading_mode=trading_mode, confirm_live=confirm_live
+    )
 
     res = execute_order_and_save_audit_task(
         db_repo=db_repo,
@@ -206,13 +216,17 @@ def gemini_replay_flow(
     end_date: Optional[str] = None,
     start_idx: int = 50,
     db_path: str = "trading_system.db",
+    trading_mode: str = "shadow",
+    confirm_live: bool = False,
 ) -> Dict[str, Any]:
     """
     Prefect Flow for Replaying Historical Candles.
     Can filter by start_date / end_date (e.g. '2026-01-01') or max_cycles.
     If max_cycles is None and dates are None, replays all available candles in DB/file.
     """
-    logger.info("Executing Prefect Flow: Gemini Historical Replay Flow")
+    logger.info(
+        f"Executing Prefect Flow: Gemini Historical Replay Flow (Mode: {trading_mode})"
+    )
 
     collector = MarketDataCollector()
     df_4h = collector.load_4h_candles()
@@ -244,7 +258,9 @@ def gemini_replay_flow(
 
     db_repo = SQLiteRepository(db_path=db_path)
     llm_client = GeminiDecisionClient(model_name="gemini-2.5-flash")
-    execution_adapter = ShadowExecutionAdapter()
+    execution_adapter = get_execution_adapter(
+        trading_mode=trading_mode, confirm_live=confirm_live
+    )
     kill_switch = KillSwitch()
 
     strat_file = Path("configs/strategies/btc_4h_adaptive.md")
