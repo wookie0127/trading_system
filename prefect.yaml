@@ -58,16 +58,19 @@ deployments:
     day_or: true
 - name: Daily-News-Summary
   version: null
-  tags: []
+  tags: ["gemini", "news"]
   concurrency_limit: null
-  description: "LLM 기반 주요 뉴스 헤드라인 요약 아카이브\n운영 스케줄은 macOS LaunchAgent(com.giwooklee.trading-system.daily-news-agy)에서 agy CLI로 실행"
+  description: "Gemini / LLM 기반 주요 뉴스 헤드라인 요약 Obsidian 아카이브 Prefect Flow"
   entrypoint: src/news/daily_news_orchestrator.py:daily_news_summary_flow
   parameters: {}
   work_pool:
     name: default-agent-pool
     work_queue_name: null
     job_variables: {}
-  schedules: []
+  schedules:
+  - cron: 0 7 * * 1-5
+    timezone: Asia/Seoul
+    day_or: true
 - name: Gemini-4H-System-Trading
   version: null
   tags: ["gemini", "crypto", "btc"]
