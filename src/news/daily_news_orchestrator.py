@@ -92,7 +92,12 @@ def _config_list(name: str, default: list[str]) -> list[str]:
 
 
 def _config_value(name: str, default: str | int | None = None):
-    return NEWS_CONFIGS.get(name, os.getenv(name, default))
+    val = NEWS_CONFIGS.get(name)
+    if val is None:
+        val = os.getenv(name)
+    if val is None:
+        return default
+    return val
 
 
 def _current_news_datetime() -> datetime:
@@ -626,15 +631,19 @@ async def daily_news_summary_flow(
     )
 
     if resolved_backend == "openai":
-        resolved_model = model or str(_config_value("OPENAI_MODEL", DEFAULT_OPENAI_MODEL))
+        val = model or _config_value("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+        resolved_model = str(val) if val is not None else ""
     elif resolved_backend in {"gemini", "cmux-gemini"}:
-        resolved_model = model or str(_config_value("GEMINI_MODEL", DEFAULT_GEMINI_MODEL))
+        val = model or _config_value("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+        resolved_model = str(val) if val is not None else ""
     elif resolved_backend == "codex":
-        resolved_model = model or str(_config_value("CODEX_MODEL", DEFAULT_CODEX_MODEL))
+        val = model or _config_value("CODEX_MODEL", DEFAULT_CODEX_MODEL)
+        resolved_model = str(val) if val is not None else ""
     elif resolved_backend == "agy":
-        resolved_model = model or str(_config_value("AGY_MODEL", DEFAULT_AGY_MODEL))
+        val = model or _config_value("AGY_MODEL", DEFAULT_AGY_MODEL)
+        resolved_model = str(val) if val is not None else ""
     else:
-        resolved_model = model or ""
+        resolved_model = str(model) if model is not None else ""
 
     resolved_codex_cmd = codex_command or str(_config_value("CODEX_CLI_COMMAND", DEFAULT_CODEX_COMMAND))
     resolved_agy_cmd = agy_command or str(_config_value("AGY_CLI_COMMAND", DEFAULT_AGY_COMMAND))

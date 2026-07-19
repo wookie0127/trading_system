@@ -251,7 +251,7 @@ NEWS_OBSIDIAN_SUBDIR=뉴스요약
 수동 실행:
 
 ```bash
-uv run python src/news/gemini_news_orchestrator.py
+uv run python src/news/daily_news_orchestrator.py
 ```
 
 ### 텔레그램 리딩방 실시간 매매
@@ -332,8 +332,8 @@ uv run python src/follow_telegram_leading/orchestrator.py compact --start-date 2
 Prefect 배포:
 
 ```bash
-uv run prefect deploy src/news/gemini_news_orchestrator.py:daily_news_summary_gemini_flow \
-  --name "Daily-News-Summary-Gemini" \
+uv run prefect deploy src/news/daily_news_orchestrator.py:daily_news_summary_flow \
+  --name "Daily-News-Summary" \
   --cron "0 7 * * 1-5" \
   --timezone "Asia/Seoul" \
   --pool "default-agent-pool"
