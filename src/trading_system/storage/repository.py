@@ -1,11 +1,17 @@
 import sqlite3
 import json
-from typing import Dict, Any
+from pathlib import Path
+from typing import Dict, Any, Union
+
+try:
+    from src.core.config import DB_PATH
+except ImportError:
+    from core.config import DB_PATH
 
 
 class SQLiteRepository:
-    def __init__(self, db_path: str = "trading_system.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: Union[str, Path] = DB_PATH):
+        self.db_path = str(db_path)
         self._init_db()
 
     def _get_connection(self):

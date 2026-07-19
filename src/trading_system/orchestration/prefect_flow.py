@@ -4,6 +4,7 @@ from typing import Dict, Any, Optional
 import pandas as pd
 from loguru import logger
 from prefect import flow, task
+from prefect.cache_policies import NO_CACHE
 
 from src.trading_system.collectors.market import MarketDataCollector
 from src.trading_system.snapshots.builder import SnapshotBuilder
@@ -29,7 +30,12 @@ def build_and_validate_snapshot_task(
     return {"snapshot": snapshot, "is_valid": is_valid}
 
 
-@task(name="Get Gemini Decision", retries=2, retry_delay_seconds=3)
+@task(
+    name="Get Gemini Decision",
+    retries=2,
+    retry_delay_seconds=3,
+    cache_policy=NO_CACHE,
+)
 def get_gemini_decision_task(
     client: GeminiDecisionClient, snapshot: Any, strategy_guidelines: str
 ) -> Dict[str, Any]:
@@ -43,7 +49,7 @@ def get_gemini_decision_task(
     }
 
 
-@task(name="Validate Policy & Risk")
+@task(name="Validate Policy & Risk", cache_policy=NO_CACHE)
 def validate_policy_and_risk_task(
     decision: Any, snapshot: Any, kill_switch: KillSwitch
 ) -> Dict[str, Any]:
@@ -57,7 +63,7 @@ def validate_policy_and_risk_task(
     return {"passed": passed, "reason": reason}
 
 
-@task(name="Execute Shadow Order & Save Audit")
+@task(name="Execute Shadow Order & Save Audit", cache_policy=NO_CACHE)
 def execute_order_and_save_audit_task(
     db_repo: SQLiteRepository,
     execution_adapter: ShadowExecutionAdapter,

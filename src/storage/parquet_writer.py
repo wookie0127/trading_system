@@ -9,7 +9,12 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from loguru import logger
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+try:
+    from src.core.config import PROJECT_DIR
+except ImportError:
+    from core.config import PROJECT_DIR
+
+PROJECT_ROOT = PROJECT_DIR
 MARKET_DATA_DIR = PROJECT_ROOT / "dataset" / "market_data"
 _NUMERIC_FLOAT_COLUMNS = ("open", "high", "low", "close", "volume", "trade_value")
 

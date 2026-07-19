@@ -12,6 +12,12 @@ except ImportError:
     HAS_GENAI = False
 
 from src.trading_system.llm.schemas import TradingDecision, Evidence
+
+try:
+    from src.core.config import GEMINI_API_KEY
+except ImportError:
+    from core.config import GEMINI_API_KEY
+
 from src.trading_system.llm.prompts import SYSTEM_INSTRUCTION, build_user_prompt
 from src.trading_system.snapshots.schemas import MarketSnapshot
 
@@ -21,7 +27,13 @@ class GeminiDecisionClient:
         self, model_name: str = "gemini-2.5-flash", api_key: Optional[str] = None
     ):
         self.model_name = model_name
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
+        self.api_key = (
+            api_key
+            or GEMINI_API_KEY
+            or os.getenv("GEMINI_API")
+            or os.getenv("GEMINI_API_KEY")
+            or os.getenv("GOOGLE_API_KEY")
+        )
         if HAS_GENAI and self.api_key:
             self.client = genai.Client(api_key=self.api_key)
         else:

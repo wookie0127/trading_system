@@ -3,12 +3,17 @@ from pathlib import Path
 import pandas as pd
 from typing import Union
 
+try:
+    from src.core.config import DATA_PROCESSED_DIR, DB_PATH
+except ImportError:
+    from core.config import DATA_PROCESSED_DIR, DB_PATH
+
 
 class MarketDataCollector:
     def __init__(
         self,
-        parquet_path: Union[str, Path] = "data/processed/BTCUSDT_4h.parquet",
-        db_path: Union[str, Path] = "trading_data.db",
+        parquet_path: Union[str, Path] = DATA_PROCESSED_DIR / "BTCUSDT_4h.parquet",
+        db_path: Union[str, Path] = DB_PATH,
     ):
         self.parquet_path = Path(parquet_path)
         self.db_path = Path(db_path)

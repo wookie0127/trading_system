@@ -40,6 +40,7 @@ dependencies = [
     "plotly>=6.6.0",
     "telethon>=1.43.2",
     "optuna>=4.9.0",
+    "google-genai>=2.12.1",
 ]
 
 [dependency-groups]

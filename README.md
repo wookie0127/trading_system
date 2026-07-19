@@ -19,15 +19,44 @@ docker compose up -d --build
 ```
 src/
 ├── api/                         # FastAPI 서버
+├── apps/                        # 애플리케이션 진입점 (gemini_trading_app, custom_backtest_app)
 ├── bots/                        # Slack / Discord 알림 및 대화형 입력
 ├── collectors/                  # 외부 데이터 수집기
-├── core/                        # KIS 인증, 설정, 시장/주문 API
+├── core/                        # KIS 인증, 경로 설정(config.py), 시장/주문 API
 ├── follow_telegram_leading/     # 텔레그램 리딩방 파싱, 매매 판단, compact archive
 ├── news/                        # RSS 뉴스 요약 Prefect flow
 ├── pipelines/                   # 일봉/분봉 수집 Prefect flow
 ├── runners/                     # 장중 수집 데몬 등 실행 진입점
 ├── storage/                     # Parquet/DB 저장 유틸리티
-└── trading_harness/             # research harness agents, features, backtest, report
+├── trading_harness/             # research harness agents, features, backtest, report
+└── trading_system/              # Gemini 기반 자율 주행 트레이딩 아키텍처 (Prefect Flow)
+```
+
+---
+
+## 🤖 Gemini Autonomous Trading System
+
+Gemini LLM 기반의 자율주행 트레이딩 시스템 아키텍처입니다. Prefect Flow를 기반으로 Snapshot 생성 -> LLM 판단 -> Risk/Policy 검증 -> Shadow Order 시뮬레이션 -> Audit DB 기록의 전체 파이프라인을 자동 제어합니다.
+
+### 🔑 주요 특징
+- **중앙 경로 관리 (`src/core/config.py`)**: `PROJECT_DIR / .env` 기반 자동 로딩 및 `GEMINI_API` 키 우선 로딩.
+- **Prefect Flow 기반 오케스트레이션**: 리플레이 백테스트 및 실시간 Single-shot 트레이딩 지원 (`NO_CACHE` 세션 직렬화 최적화).
+- **강건한 리스크 검증**: Kill Switch, ATR 기반 Stop Loss, 포지션 사이징(Sizing) 내장.
+
+### ▶️ 실행 명령어
+
+```bash
+# 1. 단일 사이클 실시간 테스트 (Single-Shot Mode)
+uv run python src/apps/gemini_trading_app.py --mode single
+
+# 2. 리플레이 백테스트 (N개 캔들 지정)
+uv run python src/apps/gemini_trading_app.py --mode replay --cycles 5
+
+# 3. 기간 지정 리플레이 백테스트
+uv run python src/apps/gemini_trading_app.py --mode replay --start-date 2026-06-01 --end-date 2026-06-07
+
+# 4. 트레이딩 시스템 단위 테스트
+uv run pytest tests/unit/test_system.py -v
 ```
 
 ---

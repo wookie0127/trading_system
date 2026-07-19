@@ -9,8 +9,13 @@ from pathlib import Path
 import polars as pl
 import streamlit as st
 
+try:
+    from src.core.config import PROJECT_DIR
+except ImportError:
+    from core.config import PROJECT_DIR
+
 SRC_DIR = Path(__file__).resolve().parents[1]
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = PROJECT_DIR
 
 DEFAULT_DATA_ROOTS = [
     PROJECT_ROOT / "dataset" / "market_data" / "kr" / "kospi200" / "1min",

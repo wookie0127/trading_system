@@ -1,11 +1,14 @@
-from pathlib import Path
+try:
+    from src.core.config import DATA_DIR, DATA_REFERENCE_DIR
+except ImportError:
+    from core.config import DATA_DIR, DATA_REFERENCE_DIR
 
-DATADIR = Path(__file__).parents[1] / "data"
-PROJECT_DATA_DIR = Path(__file__).parents[2] / "data"
+DATADIR = DATA_DIR
+PROJECT_DATA_DIR = DATA_DIR
 
 CODE_PATH_BOOK = {
-    "nasdaq": PROJECT_DATA_DIR / "reference" / "nasdaq100_symbols.json",
-    "kospi": PROJECT_DATA_DIR / "reference" / "kospi200_symbols.json",
+    "nasdaq": DATA_REFERENCE_DIR / "nasdaq100_symbols.json",
+    "kospi": DATA_REFERENCE_DIR / "kospi200_symbols.json",
 }
 
 API_ROOT = "https://openapi.koreainvestment.com:9443"

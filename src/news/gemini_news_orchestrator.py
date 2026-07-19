@@ -22,8 +22,13 @@ from news.daily_news_orchestrator import (
     summarize_with_gemini_api,
 )
 
+try:
+    from src.core.config import OBSIDIAN_DIR
+except ImportError:
+    from core.config import OBSIDIAN_DIR
+
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
-DEFAULT_OBSIDIAN_ROOT = Path("obsidian")
+DEFAULT_OBSIDIAN_ROOT = OBSIDIAN_DIR
 DEFAULT_OBSIDIAN_SUBDIR = "뉴스요약"
 DEFAULT_TIMEOUT_SECONDS = 180
 KOREAN_WEEKDAYS = ["월", "화", "수", "목", "금", "토", "일"]
