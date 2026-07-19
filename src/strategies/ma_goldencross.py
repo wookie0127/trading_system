@@ -21,7 +21,7 @@ class MovingAverageGoldenCrossStrategy:
         self,
         short_ma_period: int = DEFAULT_SHORT_MA_PERIOD,
         long_ma_period: int = DEFAULT_LONG_MA_PERIOD,
-        **kwargs
+        **kwargs,
     ):
         if short_ma_period <= 0:
             raise ValueError("short_ma_period must be positive.")
@@ -76,13 +76,17 @@ def add_signals(
         (
             (pl.col("short_prev") <= pl.col("long_prev"))
             & (pl.col("short_ma") > pl.col("long_ma"))
-        ).fill_null(False).alias("buy_signal")
+        )
+        .fill_null(False)
+        .alias("buy_signal")
     )
     df = df.with_columns(
         (
             (pl.col("short_prev") >= pl.col("long_prev"))
             & (pl.col("short_ma") < pl.col("long_ma"))
-        ).fill_null(False).alias("sell_signal")
+        )
+        .fill_null(False)
+        .alias("sell_signal")
     )
     return df
 
@@ -102,11 +106,27 @@ def backtest_ma_cross(df: pl.DataFrame, initial_balance: float = 1000000) -> dic
         if row["buy_signal"] and position == 0:
             position = cash / price
             cash = 0.0
-            trades.append({"idx": idx, "timestamp": timestamp, "symbol": symbol, "side": "BUY", "price": price})
+            trades.append(
+                {
+                    "idx": idx,
+                    "timestamp": timestamp,
+                    "symbol": symbol,
+                    "side": "BUY",
+                    "price": price,
+                }
+            )
         elif row["sell_signal"] and position > 0:
             cash = position * price
             position = 0.0
-            trades.append({"idx": idx, "timestamp": timestamp, "symbol": symbol, "side": "SELL", "price": price})
+            trades.append(
+                {
+                    "idx": idx,
+                    "timestamp": timestamp,
+                    "symbol": symbol,
+                    "side": "SELL",
+                    "price": price,
+                }
+            )
     final_value = cash + position * df["close"][-1]
     return {
         "initial_balance": initial_balance,
@@ -116,7 +136,9 @@ def backtest_ma_cross(df: pl.DataFrame, initial_balance: float = 1000000) -> dic
     }
 
 
-def backtest_by_symbol(df: pl.DataFrame, initial_balance: float = 1000000) -> pl.DataFrame:
+def backtest_by_symbol(
+    df: pl.DataFrame, initial_balance: float = 1000000
+) -> pl.DataFrame:
     if "symbol" not in df.columns:
         raise ValueError("symbol 컬럼이 필요합니다.")
 
@@ -155,4 +177,5 @@ def main(
 
 if __name__ == "__main__":
     import fire
+
     fire.Fire(main)

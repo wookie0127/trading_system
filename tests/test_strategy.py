@@ -3,7 +3,9 @@ from datetime import date
 import polars as pl
 
 from trading_harness.strategies.trend_following import SimpleTrendFollowingStrategy
-from trading_harness.strategies.us_market_shock_inverse import USMarketShockInverseStrategy
+from trading_harness.strategies.us_market_shock_inverse import (
+    USMarketShockInverseStrategy,
+)
 
 
 def test_us_market_shock_inverse_signal():

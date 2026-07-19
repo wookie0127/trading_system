@@ -24,9 +24,11 @@ class KISAuthHandler:
         load_dotenv()
 
         self.credential_profile = self._resolve_profile()
-        self.app_key, self.app_secret = self._resolve_api_credentials(self.credential_profile)
-        self.account_number, self.account_product_code = self._resolve_account_credentials(
+        self.app_key, self.app_secret = self._resolve_api_credentials(
             self.credential_profile
+        )
+        self.account_number, self.account_product_code = (
+            self._resolve_account_credentials(self.credential_profile)
         )
         self.is_simulation = self.credential_profile == "paper" or (
             os.getenv("KIS_SIMULATION", "false").lower() == "true"
@@ -38,9 +40,13 @@ class KISAuthHandler:
             self.base_url = "https://openapi.koreainvestment.com:9443"
 
         if not self.app_key or not self.app_secret:
-            raise ValueError("KIS API credentials are missing. Set KIS_* or PAPER_* in ~/.ssh/kis.")
+            raise ValueError(
+                "KIS API credentials are missing. Set KIS_* or PAPER_* in ~/.ssh/kis."
+            )
 
-        self.token_file = CURRENT_DIR.parent / f"access_token.{self.credential_profile}.json"
+        self.token_file = (
+            CURRENT_DIR.parent / f"access_token.{self.credential_profile}.json"
+        )
         self._access_token = None
         logger.info(
             "Initialized KIS auth profile={} simulation={} account_configured={}",
@@ -155,7 +161,7 @@ class KISAuthHandler:
         """토큰의 유효성 검사 (키 일치 여부 및 만료 시간)"""
         if not token_data or "access_token" not in token_data:
             return False
-        
+
         if token_data.get("app_key") != self.app_key:
             return False
 
@@ -163,13 +169,13 @@ class KISAuthHandler:
         if expired_at:
             # 1분 마진을 두고 체크
             return time.time() < (expired_at - 60)
-        
+
         return False
 
     def get_valid_token(self) -> str:
         """유효한 토큰 반환"""
         token_data = self._load_token()
-        
+
         if self._is_token_valid(token_data):
             # token_data가 None이 아님을 _is_token_valid에서 보장함
             return token_data["access_token"]  # type: ignore

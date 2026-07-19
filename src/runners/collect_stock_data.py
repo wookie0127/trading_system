@@ -6,7 +6,10 @@ Usage:
     python src/collect_stock_data.py --symbol 005930 --exchange 서울
     python src/collect_stock_data.py --symbol AAPL --exchange 나스닥
 """
-import sys as _sys; from pathlib import Path as _Path
+
+import sys as _sys
+from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).parents[1]))  # src/ 패키지 루트
 del _sys, _Path
 
@@ -20,52 +23,61 @@ from loguru import logger
 from core.kis_market_handler import MarketHandler
 from storage.parquet_writer import daily_path, write_parquet
 
+
 def parse_intraday(rows: list[dict], symbol: str, trade_date: str) -> pd.DataFrame:
     records = []
     for row in rows:
         time_str = row.get("stck_cntg_hour") or row.get("t_cntg_hour") or row.get("tm")
-        if not time_str: continue
-        
+        if not time_str:
+            continue
+
         # Format HHMMSS
-        if len(time_str) == 4: # HHMM
+        if len(time_str) == 4:  # HHMM
             time_str += "00"
-            
+
         try:
             ts = datetime.strptime(f"{trade_date} {time_str}", "%Y%m%d %H%M%S")
         except ValueError:
             continue
 
-        records.append({
-            "timestamp": ts,
-            "symbol": symbol,
-            "open": float(row.get("stck_oprc") or row.get("open") or 0),
-            "high": float(row.get("stck_hgpr") or row.get("high") or 0),
-            "low": float(row.get("stck_lwpr") or row.get("low") or 0),
-            "close": float(row.get("stck_prpr") or row.get("last") or 0),
-            "volume": float(row.get("cntg_vol") or row.get("tvol") or 0),
-        })
+        records.append(
+            {
+                "timestamp": ts,
+                "symbol": symbol,
+                "open": float(row.get("stck_oprc") or row.get("open") or 0),
+                "high": float(row.get("stck_hgpr") or row.get("high") or 0),
+                "low": float(row.get("stck_lwpr") or row.get("low") or 0),
+                "close": float(row.get("stck_prpr") or row.get("last") or 0),
+                "volume": float(row.get("cntg_vol") or row.get("tvol") or 0),
+            }
+        )
     return pd.DataFrame(records)
+
 
 def parse_investor_flow(rows: list[dict], symbol: str, trade_date: str) -> pd.DataFrame:
     records = []
     for row in rows:
         time_str = row.get("stck_cntg_hour")
-        if not time_str: continue
-        
+        if not time_str:
+            continue
+
         try:
             ts = datetime.strptime(f"{trade_date} {time_str}", "%Y%m%d %H%M%S")
         except ValueError:
             continue
 
-        records.append({
-            "timestamp": ts,
-            "symbol": symbol,
-            "price": float(row.get("stck_prpr") or 0),
-            "foreigner_net_buy": int(row.get("fore_ntby_qty") or 0),
-            "institution_net_buy": int(row.get("orgn_ntby_qty") or 0),
-            "private_net_buy": int(row.get("prsn_ntby_qty") or 0),
-        })
+        records.append(
+            {
+                "timestamp": ts,
+                "symbol": symbol,
+                "price": float(row.get("stck_prpr") or 0),
+                "foreigner_net_buy": int(row.get("fore_ntby_qty") or 0),
+                "institution_net_buy": int(row.get("orgn_ntby_qty") or 0),
+                "private_net_buy": int(row.get("prsn_ntby_qty") or 0),
+            }
+        )
     return pd.DataFrame(records)
+
 
 async def collect_data(symbol: str, exchange: str):
     handler = MarketHandler(exchange=exchange)
@@ -98,10 +110,15 @@ async def collect_data(symbol: str, exchange: str):
         else:
             logger.warning(f"No investor flow data for {symbol}")
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--symbol", required=True, help="Stock symbol (e.g. 005930, AAPL)")
-    parser.add_argument("--exchange", default="서울", help="Exchange (서울, 나스닥, 뉴욕)")
+    parser.add_argument(
+        "--symbol", required=True, help="Stock symbol (e.g. 005930, AAPL)"
+    )
+    parser.add_argument(
+        "--exchange", default="서울", help="Exchange (서울, 나스닥, 뉴욕)"
+    )
     args = parser.parse_args()
 
     asyncio.run(collect_data(args.symbol, args.exchange))

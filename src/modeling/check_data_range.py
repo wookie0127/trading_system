@@ -7,16 +7,17 @@ from datetime import datetime
 # max_request: 한 번의 API 호출로 가져올 수 있는 최대 기간
 # max_lookback: 현재 시점으로부터 거슬러 올라갈 수 있는 최대 기간
 YF_LIMITS = {
-    "1m":  {"max_request": 7,   "max_lookback": 30},
-    "2m":  {"max_request": 60,  "max_lookback": 60},
-    "5m":  {"max_request": 60,  "max_lookback": 60},
-    "15m": {"max_request": 60,  "max_lookback": 60},
-    "30m": {"max_request": 60,  "max_lookback": 60},
-    "90m": {"max_request": 60,  "max_lookback": 60},
+    "1m": {"max_request": 7, "max_lookback": 30},
+    "2m": {"max_request": 60, "max_lookback": 60},
+    "5m": {"max_request": 60, "max_lookback": 60},
+    "15m": {"max_request": 60, "max_lookback": 60},
+    "30m": {"max_request": 60, "max_lookback": 60},
+    "90m": {"max_request": 60, "max_lookback": 60},
     "60m": {"max_request": 730, "max_lookback": 730},
-    "1h":  {"max_request": 730, "max_lookback": 730},
-    "1d":  {"max_request": None, "max_lookback": None}, # 일봉은 사실상 제한 없음
+    "1h": {"max_request": 730, "max_lookback": 730},
+    "1d": {"max_request": None, "max_lookback": None},  # 일봉은 사실상 제한 없음
 }
+
 
 def parse_period_to_days(period_str: str) -> int:
     """
@@ -46,6 +47,7 @@ def parse_period_to_days(period_str: str) -> int:
     else:
         raise ValueError(f"Unknown period unit: {unit}")
 
+
 def validate_yf_params(symbol: str, interval: str, period: str):
     """
     Yahoo Finance 요청 파라미터가 유효한지 검증하고 제한을 넘으면 ValueError를 발생시킵니다.
@@ -70,6 +72,7 @@ def validate_yf_params(symbol: str, interval: str, period: str):
             f"[{symbol}] Interval '{interval}'은(는) 최근 {limit['max_lookback']}일 이내의 데이터만 조회 가능합니다. "
             f"요청된 기간: {period} ({requested_days}일)"
         )
+
 
 def check_data_range(symbol: str, interval: str, period: str):
     """
@@ -101,11 +104,18 @@ def check_data_range(symbol: str, interval: str, period: str):
     except Exception as e:
         print(f"  ERROR during download: {e}")
 
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Check Yahoo Finance data availability with validation.")
+    parser = argparse.ArgumentParser(
+        description="Check Yahoo Finance data availability with validation."
+    )
     parser.add_argument("--symbol", default="QQQ", help="Ticker symbol (e.g., QQQ)")
-    parser.add_argument("--interval", default="1m", help="Data interval (e.g., 1m, 5m, 1d)")
-    parser.add_argument("--period", default="7d", help="Data period (e.g., 7d, 1mo, 3mo)")
+    parser.add_argument(
+        "--interval", default="1m", help="Data interval (e.g., 1m, 5m, 1d)"
+    )
+    parser.add_argument(
+        "--period", default="7d", help="Data period (e.g., 7d, 1mo, 3mo)"
+    )
 
     args = parser.parse_args()
 

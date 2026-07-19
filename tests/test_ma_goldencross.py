@@ -17,7 +17,9 @@ def test_ma_goldencross_runs_on_collected_kospi_1min_data():
     signals = add_signals(df)
 
     assert signals.height == df.height
-    assert {"short_ma", "long_ma", "buy_signal", "sell_signal"}.issubset(signals.columns)
+    assert {"short_ma", "long_ma", "buy_signal", "sell_signal"}.issubset(
+        signals.columns
+    )
     assert signals["symbol"].n_unique() > 1
     assert signals.select(pl.col("buy_signal").sum()).item() > 0
     assert signals.select(pl.col("sell_signal").sum()).item() > 0

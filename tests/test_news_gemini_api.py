@@ -59,10 +59,15 @@ def test_summarize_with_gemini_api_uses_apikeys_gemini_api(monkeypatch):
     )
 
     assert summary == "# 요약\n- 내용"
-    assert _FakeAsyncClient.last_request["endpoint"].endswith("/models/gemini-test:generateContent")
+    assert _FakeAsyncClient.last_request["endpoint"].endswith(
+        "/models/gemini-test:generateContent"
+    )
     assert _FakeAsyncClient.last_request["params"] == {"key": "test-gemini-api"}
     assert _FakeAsyncClient.last_request["timeout"] == 12
-    assert _FakeAsyncClient.last_request["json"]["contents"][0]["parts"][0]["text"] == "뉴스요약해줘"
+    assert (
+        _FakeAsyncClient.last_request["json"]["contents"][0]["parts"][0]["text"]
+        == "뉴스요약해줘"
+    )
 
 
 def test_run_agy_cli_uses_print_mode(monkeypatch):
@@ -82,7 +87,9 @@ def test_run_agy_cli_uses_print_mode(monkeypatch):
 
         return Result()
 
-    monkeypatch.setattr(orchestrator.shutil, "which", lambda executable: "/usr/local/bin/agy")
+    monkeypatch.setattr(
+        orchestrator.shutil, "which", lambda executable: "/usr/local/bin/agy"
+    )
     monkeypatch.setattr(orchestrator.subprocess, "run", fake_run)
 
     output = orchestrator.run_agy_cli(

@@ -12,7 +12,10 @@ Usage:
   python collect_daily.py --date 2025-01-15  # specific date
   python collect_daily.py --step nasdaq      # single step
 """
-import sys as _sys; from pathlib import Path as _Path
+
+import sys as _sys
+from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).parents[1]))  # src/ 패키지 루트
 del _sys, _Path
 
@@ -55,10 +58,10 @@ if __name__ == "__main__":
     import argparse
 
     _STEPS = {
-        "nasdaq":     lambda d: collect_nasdaq(start=d, end=d),
+        "nasdaq": lambda d: collect_nasdaq(start=d, end=d),
         "components": collect_kospi200_components,
-        "intraday":   collect_kospi200_intraday,
-        "flow":       collect_investor_flow,
+        "intraday": collect_kospi200_intraday,
+        "flow": collect_investor_flow,
     }
 
     parser = argparse.ArgumentParser(description="Run daily market data collection")

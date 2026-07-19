@@ -10,7 +10,10 @@ Market context data collector.
 사용법:
     python market_context_collector.py
 """
-import sys as _sys; from pathlib import Path as _Path
+
+import sys as _sys
+from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).parents[2]))  # src/ 패키지 루트
 del _sys, _Path
 
@@ -27,14 +30,14 @@ from core.kis_market_handler import MarketHandler
 # ---------------------------------------------------------------------------
 
 OVERSEAS_INDICES = {
-    "SP500":   ".SPX",
-    "NASDAQ":  ".IXIC",
-    "SOX":     ".SOX",
-    "VIX":     ".VIX",
+    "SP500": ".SPX",
+    "NASDAQ": ".IXIC",
+    "SOX": ".SOX",
+    "VIX": ".VIX",
 }
 
 DOMESTIC_INDICES = {
-    "KOSPI":   "0001",
+    "KOSPI": "0001",
 }
 
 FX_SYMBOLS = {
@@ -50,6 +53,7 @@ INVESTOR_FLOW_CODES: list[str] = [
 # ---------------------------------------------------------------------------
 # 수집 함수
 # ---------------------------------------------------------------------------
+
 
 def collect_overseas_indices(
     handler: MarketHandler,
@@ -134,7 +138,10 @@ def collect_fx_rates(
 # 결과 출력 헬퍼
 # ---------------------------------------------------------------------------
 
-def _print_latest(name: str, df: pd.DataFrame, close_col: str, open_col: str | None = None) -> None:
+
+def _print_latest(
+    name: str, df: pd.DataFrame, close_col: str, open_col: str | None = None
+) -> None:
     if df.empty:
         print(f"  {name}: N/A")
         return
@@ -159,14 +166,19 @@ if __name__ == "__main__":
 
     print("\n=== US Market Indices ===")
     overseas = collect_overseas_indices(handler, start_date, end_date)
-    _print_latest("S&P500",  overseas.get("SP500",  pd.DataFrame()), "clpr")
-    _print_latest("NASDAQ",  overseas.get("NASDAQ", pd.DataFrame()), "clpr")
-    _print_latest("SOX",     overseas.get("SOX",    pd.DataFrame()), "clpr")
-    _print_latest("VIX",     overseas.get("VIX",    pd.DataFrame()), "clpr")
+    _print_latest("S&P500", overseas.get("SP500", pd.DataFrame()), "clpr")
+    _print_latest("NASDAQ", overseas.get("NASDAQ", pd.DataFrame()), "clpr")
+    _print_latest("SOX", overseas.get("SOX", pd.DataFrame()), "clpr")
+    _print_latest("VIX", overseas.get("VIX", pd.DataFrame()), "clpr")
 
     print("\n=== KR Market Indices ===")
     domestic = collect_domestic_indices(handler, start_date, end_date)
-    _print_latest("KOSPI", domestic.get("KOSPI", pd.DataFrame()), "bstp_nmix_clpr", "bstp_nmix_oprc")
+    _print_latest(
+        "KOSPI",
+        domestic.get("KOSPI", pd.DataFrame()),
+        "bstp_nmix_clpr",
+        "bstp_nmix_oprc",
+    )
 
     print("\n=== Investor Flow (today) ===")
     flows = collect_investor_flow(handler, INVESTOR_FLOW_CODES)
@@ -181,6 +193,8 @@ if __name__ == "__main__":
     usdkrw = fx.get("USDKRW", pd.DataFrame())
     if not usdkrw.empty:
         latest = usdkrw.iloc[-1]
-        print(f"  USD/KRW: close={latest.get('clos', '?')}  ({latest['bsop_date'].date()})")
+        print(
+            f"  USD/KRW: close={latest.get('clos', '?')}  ({latest['bsop_date'].date()})"
+        )
     else:
         print("  USD/KRW: N/A")

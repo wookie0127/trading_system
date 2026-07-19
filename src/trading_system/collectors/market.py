@@ -8,7 +8,7 @@ class MarketDataCollector:
     def __init__(
         self,
         parquet_path: Union[str, Path] = "data/processed/BTCUSDT_4h.parquet",
-        db_path: Union[str, Path] = "trading_data.db"
+        db_path: Union[str, Path] = "trading_data.db",
     ):
         self.parquet_path = Path(parquet_path)
         self.db_path = Path(db_path)
@@ -23,34 +23,39 @@ class MarketDataCollector:
             cols_map = {col: col.lower() for col in df.columns}
             df = df.rename(columns=cols_map)
 
-            req = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+            req = ["timestamp", "open", "high", "low", "close", "volume"]
             for col in req:
                 if col not in df.columns:
-                    if col == 'timestamp' and 'datetime' in df.columns:
-                        df['timestamp'] = df['datetime']
-                    elif col == 'timestamp' and 'date' in df.columns:
-                        df['timestamp'] = df['date']
+                    if col == "timestamp" and "datetime" in df.columns:
+                        df["timestamp"] = df["datetime"]
+                    elif col == "timestamp" and "date" in df.columns:
+                        df["timestamp"] = df["date"]
 
-            df = df.sort_values(by='timestamp').reset_index(drop=True)
+            df = df.sort_values(by="timestamp").reset_index(drop=True)
             return df[req]
 
         elif self.db_path.exists():
             with sqlite3.connect(self.db_path) as conn:
-                df = pd.read_sql("SELECT * FROM daily_prices WHERE symbol='BTCUSDT'", conn)
+                df = pd.read_sql(
+                    "SELECT * FROM daily_prices WHERE symbol='BTCUSDT'", conn
+                )
                 if not df.empty:
-                    df['timestamp'] = df['date']
-                    return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
+                    df["timestamp"] = df["date"]
+                    return df[["timestamp", "open", "high", "low", "close", "volume"]]
 
         # Fallback dummy data if files don't exist
-        dates = pd.date_range(end=pd.Timestamp.now(), periods=200, freq='4h')
+        dates = pd.date_range(end=pd.Timestamp.now(), periods=200, freq="4h")
         import numpy as np
+
         prices = 60000 + np.cumsum(np.random.randn(200) * 200)
-        df = pd.DataFrame({
-            'timestamp': dates.astype(str),
-            'open': prices,
-            'high': prices + 150,
-            'low': prices - 150,
-            'close': prices + 20,
-            'volume': np.random.randint(100, 1000, size=200)
-        })
+        df = pd.DataFrame(
+            {
+                "timestamp": dates.astype(str),
+                "open": prices,
+                "high": prices + 150,
+                "low": prices - 150,
+                "close": prices + 20,
+                "volume": np.random.randint(100, 1000, size=200),
+            }
+        )
         return df

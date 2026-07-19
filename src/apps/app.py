@@ -90,7 +90,7 @@ def build_symbol_figure(frame: pl.DataFrame, short_ma: int, long_ma: int) -> go.
                     symbol="triangle-up",
                     size=8,
                     color="#00e676",
-                    line=dict(width=1.5, color="#ffffff")
+                    line=dict(width=1.5, color="#ffffff"),
                 ),
             ),
             row=1,
@@ -107,7 +107,7 @@ def build_symbol_figure(frame: pl.DataFrame, short_ma: int, long_ma: int) -> go.
                     symbol="triangle-down",
                     size=8,
                     color="#ff1744",
-                    line=dict(width=1.5, color="#ffffff")
+                    line=dict(width=1.5, color="#ffffff"),
                 ),
             ),
             row=1,
@@ -134,7 +134,9 @@ def build_symbol_figure(frame: pl.DataFrame, short_ma: int, long_ma: int) -> go.
     fig.update_layout(
         height=780,
         template="plotly_white",
-        font=dict(family="'Trebuchet MS', 'Inter', sans-serif", size=11, color="#373d49"),
+        font=dict(
+            family="'Trebuchet MS', 'Inter', sans-serif", size=11, color="#373d49"
+        ),
         plot_bgcolor="#ffffff",
         paper_bgcolor="#ffffff",
         margin=dict(l=30, r=20, t=40, b=30),
@@ -158,7 +160,7 @@ def build_symbol_figure(frame: pl.DataFrame, short_ma: int, long_ma: int) -> go.
             gridcolor="#f0f3fa",
             linecolor="#e0e3eb",
             showline=True,
-        )
+        ),
     )
     return fig
 
@@ -166,7 +168,9 @@ def build_symbol_figure(frame: pl.DataFrame, short_ma: int, long_ma: int) -> go.
 def render_dashboard() -> None:
     st.set_page_config(page_title="MA Golden Cross Explorer", layout="wide")
     st.title("MA Golden Cross Explorer")
-    st.caption("KOSPI 200 1분봉 기준 종목별 수익률과 기간별 MA cross 결과를 탐색합니다.")
+    st.caption(
+        "KOSPI 200 1분봉 기준 종목별 수익률과 기간별 MA cross 결과를 탐색합니다."
+    )
 
     roots = discover_data_roots()
     if not roots:
@@ -189,9 +193,15 @@ def render_dashboard() -> None:
             min_value=min_date,
             max_value=max_date,
         )
-        short_ma = st.number_input("Short MA", min_value=2, max_value=240, value=20, step=1)
-        long_ma = st.number_input("Long MA", min_value=3, max_value=480, value=60, step=1)
-        initial_balance = st.number_input("Initial balance", min_value=100_000, value=1_000_000, step=100_000)
+        short_ma = st.number_input(
+            "Short MA", min_value=2, max_value=240, value=20, step=1
+        )
+        long_ma = st.number_input(
+            "Long MA", min_value=3, max_value=480, value=60, step=1
+        )
+        initial_balance = st.number_input(
+            "Initial balance", min_value=100_000, value=1_000_000, step=100_000
+        )
 
     if start_date > end_date:
         st.error("Start date must be on or before end date.")
@@ -210,7 +220,9 @@ def render_dashboard() -> None:
     summary_cols[0].metric("Files", len(window.files))
     summary_cols[1].metric("Rows", f"{window.frame.height:,}")
     summary_cols[2].metric("Symbols", len(symbol_options))
-    summary_cols[3].metric("Date span", f"{start_date.isoformat()} to {end_date.isoformat()}")
+    summary_cols[3].metric(
+        "Date span", f"{start_date.isoformat()} to {end_date.isoformat()}"
+    )
 
     left, right = st.columns([0.36, 0.64])
 
@@ -240,16 +252,22 @@ def render_dashboard() -> None:
 
     with right:
         st.subheader("Symbol Detail")
-        selected_symbol = st.selectbox("Symbol", options=symbol_options, index=0 if default_symbol else None)
+        selected_symbol = st.selectbox(
+            "Symbol", options=symbol_options, index=0 if default_symbol else None
+        )
 
         symbol_frame = _symbol_frame(window.frame, selected_symbol)
         if symbol_frame.is_empty():
             st.warning("Selected symbol has no data in the chosen period.")
             return
 
-        symbol_returns = returns.filter(pl.col("symbol") == selected_symbol).to_dicts()[0]
+        symbol_returns = returns.filter(pl.col("symbol") == selected_symbol).to_dicts()[
+            0
+        ]
         backtest_result = backtest_ma_cross(
-            add_signals(symbol_frame, short_ma_period=int(short_ma), long_ma_period=int(long_ma)),
+            add_signals(
+                symbol_frame, short_ma_period=int(short_ma), long_ma_period=int(long_ma)
+            ),
             initial_balance=float(initial_balance),
         )
 
@@ -259,7 +277,9 @@ def render_dashboard() -> None:
         metric_cols[2].metric("Trades", len(backtest_result["trades"]))
 
         st.plotly_chart(
-            build_symbol_figure(symbol_frame, short_ma=int(short_ma), long_ma=int(long_ma)),
+            build_symbol_figure(
+                symbol_frame, short_ma=int(short_ma), long_ma=int(long_ma)
+            ),
             use_container_width=True,
         )
 

@@ -19,39 +19,39 @@ from src.trading_system.evaluation.outcomes import CounterfactualEvaluator
 
 
 @task(name="Build & Validate Snapshot", retries=1)
-def build_and_validate_snapshot_task(df_4h: pd.DataFrame, current_idx: int) -> Dict[str, Any]:
+def build_and_validate_snapshot_task(
+    df_4h: pd.DataFrame, current_idx: int
+) -> Dict[str, Any]:
     builder = SnapshotBuilder()
     snapshot = builder.build_snapshot_from_df(df_4h, current_idx)
 
     is_valid = SnapshotValidator.validate(snapshot)
-    return {
-        "snapshot": snapshot,
-        "is_valid": is_valid
-    }
+    return {"snapshot": snapshot, "is_valid": is_valid}
 
 
 @task(name="Get Gemini Decision", retries=2, retry_delay_seconds=3)
 def get_gemini_decision_task(
-    client: GeminiDecisionClient,
-    snapshot: Any,
-    strategy_guidelines: str
+    client: GeminiDecisionClient, snapshot: Any, strategy_guidelines: str
 ) -> Dict[str, Any]:
-    decision, raw_response, is_success = client.get_decision(snapshot, strategy_guidelines)
+    decision, raw_response, is_success = client.get_decision(
+        snapshot, strategy_guidelines
+    )
     return {
         "decision": decision,
         "raw_response": raw_response,
-        "is_success": is_success
+        "is_success": is_success,
     }
 
 
 @task(name="Validate Policy & Risk")
 def validate_policy_and_risk_task(
-    decision: Any,
-    snapshot: Any,
-    kill_switch: KillSwitch
+    decision: Any, snapshot: Any, kill_switch: KillSwitch
 ) -> Dict[str, Any]:
     if kill_switch.is_active:
-        return {"passed": False, "reason": f"Kill Switch Active: {kill_switch.active_reason}"}
+        return {
+            "passed": False,
+            "reason": f"Kill Switch Active: {kill_switch.active_reason}",
+        }
 
     passed, reason = PolicyValidator.validate_decision(decision, snapshot)
     return {"passed": passed, "reason": reason}
@@ -69,7 +69,7 @@ def execute_order_and_save_audit_task(
     validation_reason: str,
     df_4h: pd.DataFrame,
     current_idx: int,
-    account_balance: float = 10000.0
+    account_balance: float = 10000.0,
 ) -> Dict[str, Any]:
     order_res = None
     action = decision.action
@@ -82,13 +82,13 @@ def execute_order_and_save_audit_task(
         stop_loss = StopLossCalculator.calculate_stop_loss(
             side=side,
             entry_price=entry_price,
-            atr_14=snapshot.technical.atr_ratio * entry_price
+            atr_14=snapshot.technical.atr_ratio * entry_price,
         )
 
         qty = PositionSizer.calculate_position_size(
             account_balance=account_balance,
             entry_price=entry_price,
-            stop_loss_price=stop_loss
+            stop_loss_price=stop_loss,
         )
 
         if qty > 0:
@@ -97,7 +97,7 @@ def execute_order_and_save_audit_task(
                 side=order_side,
                 order_type="MARKET",
                 requested_price=entry_price,
-                requested_quantity=qty
+                requested_quantity=qty,
             )
             db_repo.save_order(order_res)
 
@@ -112,7 +112,7 @@ def execute_order_and_save_audit_task(
         "parsed_action": action,
         "parsed_confidence": getattr(decision, "confidence", 0.0),
         "validation_status": validation_status,
-        "validation_reason": validation_reason
+        "validation_reason": validation_reason,
     }
     db_repo.save_decision_run(run_record)
 
@@ -125,7 +125,7 @@ def execute_order_and_save_audit_task(
         "decision_id": decision_id,
         "action": action,
         "order": order_res,
-        "counterfactual": cf_outcome
+        "counterfactual": cf_outcome,
     }
 
 
@@ -133,7 +133,7 @@ def execute_order_and_save_audit_task(
 def gemini_4h_trading_flow(
     db_path: str = "trading_system.db",
     strategy_path: str = "configs/strategies/btc_4h_adaptive.md",
-    model_name: str = "gemini-2.5-flash"
+    model_name: str = "gemini-2.5-flash",
 ) -> Dict[str, Any]:
     logger.info("Executing Prefect Flow: Gemini 4H Single-Shot Trading Flow")
 
@@ -184,10 +184,12 @@ def gemini_4h_trading_flow(
         validation_status=val_status,
         validation_reason=val_reason,
         df_4h=df_4h,
-        current_idx=current_idx
+        current_idx=current_idx,
     )
 
-    logger.info(f"Prefect Flow completed: Action={res['action']}, DecisionID={res['decision_id']}")
+    logger.info(
+        f"Prefect Flow completed: Action={res['action']}, DecisionID={res['decision_id']}"
+    )
     return res
 
 
@@ -197,7 +199,7 @@ def gemini_replay_flow(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     start_idx: int = 50,
-    db_path: str = "trading_system.db"
+    db_path: str = "trading_system.db",
 ) -> Dict[str, Any]:
     """
     Prefect Flow for Replaying Historical Candles.
@@ -208,16 +210,16 @@ def gemini_replay_flow(
 
     collector = MarketDataCollector()
     df_4h = collector.load_4h_candles()
-    df_4h['timestamp_dt'] = pd.to_datetime(df_4h['timestamp'])
+    df_4h["timestamp_dt"] = pd.to_datetime(df_4h["timestamp"])
 
     # Date Range Filtering
     if start_date:
-        df_filtered = df_4h[df_4h['timestamp_dt'] >= pd.to_datetime(start_date)]
+        df_filtered = df_4h[df_4h["timestamp_dt"] >= pd.to_datetime(start_date)]
         if not df_filtered.empty:
             start_idx = max(50, df_filtered.index[0])
 
     if end_date:
-        df_filtered = df_4h[df_4h['timestamp_dt'] <= pd.to_datetime(end_date)]
+        df_filtered = df_4h[df_4h["timestamp_dt"] <= pd.to_datetime(end_date)]
         if not df_filtered.empty:
             max_end = df_filtered.index[-1]
         else:
@@ -230,7 +232,9 @@ def gemini_replay_flow(
     else:
         end_idx = max_end
 
-    logger.info(f"Replay range: candle index {start_idx} to {end_idx} (Total: {max(0, end_idx - start_idx)} candles)")
+    logger.info(
+        f"Replay range: candle index {start_idx} to {end_idx} (Total: {max(0, end_idx - start_idx)} candles)"
+    )
 
     db_repo = SQLiteRepository(db_path=db_path)
     llm_client = GeminiDecisionClient(model_name="gemini-2.5-flash")
@@ -250,7 +254,9 @@ def gemini_replay_flow(
         decision = decision_res["decision"]
 
         pol_res = validate_policy_and_risk_task(decision, snapshot, kill_switch)
-        val_status = "VALID" if (decision_res["is_success"] and pol_res["passed"]) else "INVALID"
+        val_status = (
+            "VALID" if (decision_res["is_success"] and pol_res["passed"]) else "INVALID"
+        )
         val_reason = "Pass" if pol_res["passed"] else pol_res["reason"]
 
         res = execute_order_and_save_audit_task(
@@ -263,7 +269,7 @@ def gemini_replay_flow(
             validation_status=val_status,
             validation_reason=val_reason,
             df_4h=df_4h,
-            current_idx=i
+            current_idx=i,
         )
         results.append(res)
 

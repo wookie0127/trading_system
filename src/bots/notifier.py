@@ -24,31 +24,33 @@ if CONFIG_PATH.exists():
         for k, v in (config or {}).items():
             os.environ[k] = str(v)
 
+
 class Notifier:
     def __init__(self):
         self.slack_token = os.environ.get("SLACK_BOT_TOKEN")
-        self.slack_channel = os.environ.get("SLACK_CHANNEL_ID", "C0ANXFNETHD") # Default from orchestrator
+        self.slack_channel = os.environ.get(
+            "SLACK_CHANNEL_ID", "C0ANXFNETHD"
+        )  # Default from orchestrator
         self.discord_webhook_url = os.environ.get("DISCORD_WEBHOOK_URL")
         self.discord_token = os.environ.get("DISCORD_TOKEN")
         self.discord_channel_id = os.environ.get("DISCORD_CHANNEL_ID")
-        self.diary_channel_id = (
-            os.environ.get("TLEADING_INVEST_DIARY_CHANNEL_ID")
-            or os.environ.get("DIARY_CHANNEL_ID")
-        )
-        self.review_channel_id = (
-            os.environ.get("TLEADING_INVEST_REVIEW_CHANNEL_ID")
-            or os.environ.get("REVIEW_CHANNEL_ID")
-        )
-        self.kospi_futures_channel_id = (
-            os.environ.get("TLEADING_KOSPI_FUTURES_CHANNEL_ID")
-            or os.environ.get("KOSPI_FUTURES_CHANNEL_ID")
-        )
-        
+        self.diary_channel_id = os.environ.get(
+            "TLEADING_INVEST_DIARY_CHANNEL_ID"
+        ) or os.environ.get("DIARY_CHANNEL_ID")
+        self.review_channel_id = os.environ.get(
+            "TLEADING_INVEST_REVIEW_CHANNEL_ID"
+        ) or os.environ.get("REVIEW_CHANNEL_ID")
+        self.kospi_futures_channel_id = os.environ.get(
+            "TLEADING_KOSPI_FUTURES_CHANNEL_ID"
+        ) or os.environ.get("KOSPI_FUTURES_CHANNEL_ID")
+
         # DISCORD_BOT_TOKEN 명칭 호환성 처리
         if not self.discord_token:
             self.discord_token = os.environ.get("DISCORD_BOT_TOKEN")
-        
-        self.slack_client = WebClient(token=self.slack_token) if self.slack_token else None
+
+        self.slack_client = (
+            WebClient(token=self.slack_token) if self.slack_token else None
+        )
 
     def send_slack(self, text: str):
         if not self.slack_client or not self.slack_channel:
@@ -72,18 +74,21 @@ class Notifier:
         if self.discord_webhook_url and not channel_id and not attachment_paths:
             try:
                 async with httpx.AsyncClient() as client:
-                    response = await client.post(self.discord_webhook_url, json={"content": text})
+                    response = await client.post(
+                        self.discord_webhook_url, json={"content": text}
+                    )
                     response.raise_for_status()
                     logger.info("Discord message sent via Webhook.")
                     return True
             except Exception as e:
                 logger.error(f"Failed to send Discord message via Webhook: {e}")
-                
+
         # 2. Bot REST API 방식
         target_channel = channel_id or self.discord_channel_id
         if self.discord_token and target_channel:
             existing_files = [
-                Path(path) for path in (attachment_paths or [])
+                Path(path)
+                for path in (attachment_paths or [])
                 if path and Path(path).exists()
             ]
             try:
@@ -101,7 +106,11 @@ class Notifier:
                                 files.append(
                                     (
                                         f"files[{index}]",
-                                        (file_path.name, file_handle, "application/octet-stream"),
+                                        (
+                                            file_path.name,
+                                            file_handle,
+                                            "application/octet-stream",
+                                        ),
                                     )
                                 )
 
@@ -109,14 +118,20 @@ class Notifier:
                             response = await client.post(
                                 url,
                                 headers=headers,
-                                data={"payload_json": json.dumps(payload, ensure_ascii=False)},
+                                data={
+                                    "payload_json": json.dumps(
+                                        payload, ensure_ascii=False
+                                    )
+                                },
                                 files=files,
                             )
                         finally:
                             for handle in handles:
                                 handle.close()
                     else:
-                        response = await client.post(url, headers=headers, json={"content": text})
+                        response = await client.post(
+                            url, headers=headers, json={"content": text}
+                        )
                     response.raise_for_status()
                     logger.info(f"Discord message sent to channel {target_channel}.")
                     return True
@@ -124,13 +139,17 @@ class Notifier:
                 logger.error(f"Failed to send Discord message to {target_channel}: {e}")
                 return False
 
-        logger.warning("Discord notification skipped: Missing credentials or channel ID.")
+        logger.warning(
+            "Discord notification skipped: Missing credentials or channel ID."
+        )
         return False
 
     async def notify_diary(self, text: str):
         """#tleading_invest_diary 채널에 기록합니다."""
         if self.diary_channel_id:
-            logger.info(f"Sending diary notification to channel {self.diary_channel_id}")
+            logger.info(
+                f"Sending diary notification to channel {self.diary_channel_id}"
+            )
             await self.send_discord_async(text, channel_id=self.diary_channel_id)
         else:
             # 다이어리 채널이 없으면 기본 채널로 전송
@@ -162,14 +181,20 @@ class Notifier:
         """코스피 선물 관련 알림을 전용 Discord 채널로 전송"""
         target_channel = self.kospi_futures_channel_id or self.discord_channel_id
         if target_channel:
-            logger.info(f"Sending KOSPI futures notification to channel {target_channel}")
+            logger.info(
+                f"Sending KOSPI futures notification to channel {target_channel}"
+            )
             await self.send_discord_async(text, channel_id=target_channel)
             return
 
-        logger.warning("KOSPI futures notification skipped: Missing Discord channel ID.")
+        logger.warning(
+            "KOSPI futures notification skipped: Missing Discord channel ID."
+        )
+
 
 if __name__ == "__main__":
     import asyncio
+
     n = Notifier()
     test_msg = "🚀 **[Test]** 통합 알림 시스템 테스트 중입니다."
     asyncio.run(n.notify_all(test_msg))

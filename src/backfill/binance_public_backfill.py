@@ -15,7 +15,7 @@ import argparse
 import asyncio
 import io
 import zipfile
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 import httpx
 import pandas as pd
 from loguru import logger
@@ -28,7 +28,9 @@ SPOT_MONTHLY_BASE = "https://data.binance.vision/data/spot/monthly/klines"
 SPOT_DAILY_BASE = "https://data.binance.vision/data/spot/daily/klines"
 
 
-def get_date_ranges(start_date: date, end_date: date) -> tuple[list[tuple[int, int]], list[date]]:
+def get_date_ranges(
+    start_date: date, end_date: date
+) -> tuple[list[tuple[int, int]], list[date]]:
     """
     Split the range [start_date, end_date] into completed calendar months
     and remaining individual days in the current/ongoing month.
@@ -68,7 +70,7 @@ async def download_url(client: httpx.AsyncClient, url: str) -> bytes | None:
             resp.raise_for_status()
             return resp.content
         except Exception as e:
-            logger.warning(f"Error downloading {url} (attempt {attempt+1}): {e}")
+            logger.warning(f"Error downloading {url} (attempt {attempt + 1}): {e}")
             await asyncio.sleep(2.0)
     return None
 
@@ -91,16 +93,18 @@ def process_zip_content(content: bytes, symbol: str) -> pd.DataFrame:
     # 5: Volume (Base asset)
     # 6: Close time (ms)
     # 7: Quote asset volume (equivalent to trade_value)
-    df = df.rename(columns={
-        0: "timestamp",
-        1: "open",
-        2: "high",
-        3: "low",
-        4: "close",
-        5: "volume",
-        7: "trade_value",
-    })
-    
+    df = df.rename(
+        columns={
+            0: "timestamp",
+            1: "open",
+            2: "high",
+            3: "low",
+            4: "close",
+            5: "volume",
+            7: "trade_value",
+        }
+    )
+
     if not df.empty:
         first_val = df["timestamp"].iloc[0]
         if first_val > 1e16:
@@ -109,10 +113,19 @@ def process_zip_content(content: bytes, symbol: str) -> pd.DataFrame:
             df["timestamp"] = pd.to_datetime(df["timestamp"], unit="us")
         else:
             df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-            
+
     df["symbol"] = symbol
 
-    cols = ["timestamp", "symbol", "open", "high", "low", "close", "volume", "trade_value"]
+    cols = [
+        "timestamp",
+        "symbol",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "trade_value",
+    ]
     for col in cols:
         if col not in df.columns:
             df[col] = 0.0
@@ -147,7 +160,9 @@ async def backfill_monthly(
                 all_exist = False
                 break
         if all_exist:
-            logger.info(f"Skipping monthly {symbol} {year}-{month:02d} (all daily files exist)")
+            logger.info(
+                f"Skipping monthly {symbol} {year}-{month:02d} (all daily files exist)"
+            )
             return True
 
     url = f"{SPOT_MONTHLY_BASE}/{symbol}/1m/{symbol}-1m-{year}-{month:02d}.zip"
@@ -169,10 +184,14 @@ async def backfill_monthly(
             dest = daily_path("crypto_1min", str(day))
             write_parquet(group.drop(columns=["_date"]).reset_index(drop=True), dest)
 
-        logger.success(f"Successfully processed and saved monthly data for {symbol} {year}-{month:02d}")
+        logger.success(
+            f"Successfully processed and saved monthly data for {symbol} {year}-{month:02d}"
+        )
         return True
     except Exception as e:
-        logger.error(f"Error processing monthly data for {symbol} {year}-{month:02d}: {e}")
+        logger.error(
+            f"Error processing monthly data for {symbol} {year}-{month:02d}: {e}"
+        )
         return False
 
 
@@ -201,7 +220,9 @@ async def backfill_daily(
 
         df = validate_intraday(df, symbol=symbol)
         write_parquet(df, dest)
-        logger.success(f"Successfully processed and saved daily data for {symbol} {target_date}")
+        logger.success(
+            f"Successfully processed and saved daily data for {symbol} {target_date}"
+        )
         return True
     except Exception as e:
         logger.error(f"Error processing daily data for {symbol} {target_date}: {e}")
@@ -230,19 +251,29 @@ async def backfill_symbol(
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Binance Public Data Historical Backfiller (1m)")
-    parser.add_argument("--symbols", default="BTCUSDT,ETHUSDT", help="Comma-separated symbols")
+    parser = argparse.ArgumentParser(
+        description="Binance Public Data Historical Backfiller (1m)"
+    )
+    parser.add_argument(
+        "--symbols", default="BTCUSDT,ETHUSDT", help="Comma-separated symbols"
+    )
     parser.add_argument("--start", default="2020-01-01", help="Start date (YYYY-MM-DD)")
-    parser.add_argument("--end", default=None, help="End date (YYYY-MM-DD), default is yesterday")
-    parser.add_argument("--overwrite", action="store_true", help="Force overwrite existing files")
+    parser.add_argument(
+        "--end", default=None, help="End date (YYYY-MM-DD), default is yesterday"
+    )
+    parser.add_argument(
+        "--overwrite", action="store_true", help="Force overwrite existing files"
+    )
     args = parser.parse_args()
 
     symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
     start_date = date.fromisoformat(args.start)
-    end_date = date.fromisoformat(args.end) if args.end else (date.today() - timedelta(days=1))
+    end_date = (
+        date.fromisoformat(args.end) if args.end else (date.today() - timedelta(days=1))
+    )
     skip_existing = not args.overwrite
 
-    logger.info(f"Binance Backfill Configuration:")
+    logger.info("Binance Backfill Configuration:")
     logger.info(f"  Symbols:       {symbols}")
     logger.info(f"  Date Range:    {start_date} -> {end_date}")
     logger.info(f"  Skip Existing: {skip_existing}")

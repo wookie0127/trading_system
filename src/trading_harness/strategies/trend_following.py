@@ -15,11 +15,25 @@ class SimpleTrendFollowingStrategy(BaseStrategy):
         return (
             features.filter(pl.col("symbol").is_in(self.symbols))
             .with_columns(
-                ((pl.col("close") > pl.col("ma_20")) & (pl.col("ma_20") > pl.col("ma_60")))
+                (
+                    (pl.col("close") > pl.col("ma_20"))
+                    & (pl.col("ma_20") > pl.col("ma_60"))
+                )
                 .cast(pl.Int8)
                 .alias("signal"),
                 pl.lit(self.name).alias("strategy"),
             )
-            .select(["date", "symbol", "strategy", "signal", "close", "ma_20", "ma_60", "return_1d"])
+            .select(
+                [
+                    "date",
+                    "symbol",
+                    "strategy",
+                    "signal",
+                    "close",
+                    "ma_20",
+                    "ma_60",
+                    "return_1d",
+                ]
+            )
             .sort(["symbol", "date"])
         )

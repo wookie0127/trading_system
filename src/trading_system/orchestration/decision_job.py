@@ -21,7 +21,7 @@ class DecisionJob:
         db_repo: SQLiteRepository,
         llm_client: GeminiDecisionClient,
         execution_adapter: ShadowExecutionAdapter,
-        kill_switch: KillSwitch
+        kill_switch: KillSwitch,
     ):
         self.db_repo = db_repo
         self.llm_client = llm_client
@@ -34,7 +34,7 @@ class DecisionJob:
         df_4h: pd.DataFrame,
         current_idx: int,
         account_balance: float = 10000.0,
-        strategy_guidelines: str = ""
+        strategy_guidelines: str = "",
     ) -> Dict[str, Any]:
         decision_id = f"dec-{uuid.uuid4().hex[:10]}"
 
@@ -43,24 +43,56 @@ class DecisionJob:
 
         # 2. Validate Snapshot Completeness & Freshness (Fail-Closed)
         if not SnapshotValidator.validate(snapshot):
-            logger.warning("Snapshot validation failed. Triggering Fail-closed NO_TRADE.")
-            return self._record_and_return_fail(decision_id, snapshot, "Snapshot validation failed (Stale/Incomplete)", df_4h, current_idx)
+            logger.warning(
+                "Snapshot validation failed. Triggering Fail-closed NO_TRADE."
+            )
+            return self._record_and_return_fail(
+                decision_id,
+                snapshot,
+                "Snapshot validation failed (Stale/Incomplete)",
+                df_4h,
+                current_idx,
+            )
 
         # 3. Check Kill Switch
         if self.kill_switch.is_active:
-            logger.warning(f"Kill Switch Active ({self.kill_switch.active_reason}). Forcing NO_TRADE.")
-            return self._record_and_return_fail(decision_id, snapshot, f"Kill Switch Active: {self.kill_switch.active_reason}", df_4h, current_idx)
+            logger.warning(
+                f"Kill Switch Active ({self.kill_switch.active_reason}). Forcing NO_TRADE."
+            )
+            return self._record_and_return_fail(
+                decision_id,
+                snapshot,
+                f"Kill Switch Active: {self.kill_switch.active_reason}",
+                df_4h,
+                current_idx,
+            )
 
         # 4. Call Gemini Decision Layer (with retry via client)
-        decision, raw_response, is_success = self.llm_client.get_decision(snapshot, strategy_guidelines)
+        decision, raw_response, is_success = self.llm_client.get_decision(
+            snapshot, strategy_guidelines
+        )
         if not is_success:
-            return self._record_and_return_fail(decision_id, snapshot, f"Gemini API failure: {raw_response}", df_4h, current_idx)
+            return self._record_and_return_fail(
+                decision_id,
+                snapshot,
+                f"Gemini API failure: {raw_response}",
+                df_4h,
+                current_idx,
+            )
 
         # 5. Policy Validator
-        is_policy_valid, policy_msg = PolicyValidator.validate_decision(decision, snapshot)
+        is_policy_valid, policy_msg = PolicyValidator.validate_decision(
+            decision, snapshot
+        )
         if not is_policy_valid:
             logger.warning(f"Policy validation failed: {policy_msg}")
-            return self._record_and_return_fail(decision_id, snapshot, f"Policy Invalid: {policy_msg}", df_4h, current_idx)
+            return self._record_and_return_fail(
+                decision_id,
+                snapshot,
+                f"Policy Invalid: {policy_msg}",
+                df_4h,
+                current_idx,
+            )
 
         # 6. Risk Engine Calculation & Execution (Shadow/Paper)
         order_res = None
@@ -74,13 +106,13 @@ class DecisionJob:
             stop_loss = StopLossCalculator.calculate_stop_loss(
                 side=side,
                 entry_price=entry_price,
-                atr_14=snapshot.technical.atr_ratio * entry_price
+                atr_14=snapshot.technical.atr_ratio * entry_price,
             )
 
             qty = PositionSizer.calculate_position_size(
                 account_balance=account_balance,
                 entry_price=entry_price,
-                stop_loss_price=stop_loss
+                stop_loss_price=stop_loss,
             )
 
             if qty > 0:
@@ -89,7 +121,7 @@ class DecisionJob:
                     side=order_side,
                     order_type="MARKET",
                     requested_price=entry_price,
-                    requested_quantity=qty
+                    requested_quantity=qty,
                 )
                 self.db_repo.save_order(order_res)
 
@@ -105,7 +137,7 @@ class DecisionJob:
             "parsed_action": decision.action,
             "parsed_confidence": decision.confidence,
             "validation_status": "VALID",
-            "validation_reason": "Pass"
+            "validation_reason": "Pass",
         }
         self.db_repo.save_decision_run(run_record)
 
@@ -119,7 +151,7 @@ class DecisionJob:
             "action": decision.action,
             "confidence": decision.confidence,
             "order": order_res,
-            "counterfactual": cf_outcome
+            "counterfactual": cf_outcome,
         }
 
     def _record_and_return_fail(
@@ -128,7 +160,7 @@ class DecisionJob:
         snapshot: Any,
         reason: str,
         df_4h: Optional[pd.DataFrame] = None,
-        current_idx: Optional[int] = None
+        current_idx: Optional[int] = None,
     ) -> Dict[str, Any]:
         fail_record = {
             "id": decision_id,
@@ -136,12 +168,14 @@ class DecisionJob:
             "symbol": "BTCUSDT",
             "model_name": self.llm_client.model_name,
             "strategy_version": "v1.0",
-            "snapshot_data": snapshot.model_dump() if hasattr(snapshot, "model_dump") else {},
+            "snapshot_data": snapshot.model_dump()
+            if hasattr(snapshot, "model_dump")
+            else {},
             "raw_response": reason,
             "parsed_action": "NO_TRADE",
             "parsed_confidence": 0.0,
             "validation_status": "INVALID",
-            "validation_reason": reason
+            "validation_reason": reason,
         }
         self.db_repo.save_decision_run(fail_record)
 

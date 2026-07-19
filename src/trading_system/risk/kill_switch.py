@@ -3,7 +3,7 @@ class KillSwitch:
         self,
         max_daily_loss_ratio: float = 0.02,
         max_drawdown_ratio: float = 0.08,
-        max_consecutive_losses: int = 4
+        max_consecutive_losses: int = 4,
     ):
         self.max_daily_loss_ratio = max_daily_loss_ratio
         self.max_drawdown_ratio = max_drawdown_ratio
@@ -16,7 +16,7 @@ class KillSwitch:
         daily_loss_ratio: float,
         drawdown_ratio: float,
         consecutive_losses: int,
-        data_is_stale: bool = False
+        data_is_stale: bool = False,
     ) -> bool:
         """
         Triggers kill switch if risk limits are violated or data is stale.

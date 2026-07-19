@@ -6,7 +6,7 @@ class PositionSizer:
         stop_loss_price: float,
         max_risk_ratio: float = 0.005,
         max_position_ratio: float = 0.15,
-        max_leverage: float = 2.0
+        max_leverage: float = 2.0,
     ) -> float:
         """
         Deterministic Position Sizing Formula:

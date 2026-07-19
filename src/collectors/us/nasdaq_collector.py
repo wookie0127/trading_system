@@ -5,7 +5,10 @@ Source: yfinance
 Target: ^IXIC (NASDAQ Composite) or ^NDX (NASDAQ 100)
 Storage: market_data/us/nasdaq/1min/<YYYY-MM-DD>.parquet
 """
-import sys as _sys; from pathlib import Path as _Path
+
+import sys as _sys
+from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).parents[2]))  # src/ 패키지 루트
 del _sys, _Path
 
@@ -40,14 +43,16 @@ def _fetch_chunk(symbol: str, start: date, end: date) -> pd.DataFrame:
         return pd.DataFrame()
 
     df = df.reset_index()
-    df = df.rename(columns={
-        "Datetime": "timestamp",
-        "Open": "open",
-        "High": "high",
-        "Low": "low",
-        "Close": "close",
-        "Volume": "volume",
-    })
+    df = df.rename(
+        columns={
+            "Datetime": "timestamp",
+            "Open": "open",
+            "High": "high",
+            "Low": "low",
+            "Close": "close",
+            "Volume": "volume",
+        }
+    )
     df["symbol"] = symbol
 
     # Normalize timestamp to UTC-aware or tz-naive
@@ -83,7 +88,9 @@ async def collect_nasdaq(
 
     current = start
     while current <= end:
-        chunk_end = min(current + timedelta(days=_MAX_DAYS_PER_CHUNK), end + timedelta(days=1))
+        chunk_end = min(
+            current + timedelta(days=_MAX_DAYS_PER_CHUNK), end + timedelta(days=1)
+        )
         logger.debug(f"  Fetching chunk {current} → {chunk_end - timedelta(days=1)}")
 
         df = await asyncio.to_thread(_fetch_chunk, symbol, current, chunk_end)

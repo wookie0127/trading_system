@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 
 import polars as pl
 
@@ -13,17 +12,21 @@ class MovingAverageCrossStrategy:
         name: str = "Moving Average Cross",
         fast_window: int = 20,
         slow_window: int = 60,
-        **kwargs
+        **kwargs,
     ):
         self.name = name
         self.fast_window = fast_window
         self.slow_window = slow_window
 
     def generate_signals(self, df: pl.DataFrame) -> pl.DataFrame:
-        return add_moving_average_signals(df, fast_window=self.fast_window, slow_window=self.slow_window)
+        return add_moving_average_signals(
+            df, fast_window=self.fast_window, slow_window=self.slow_window
+        )
 
 
-def add_moving_average_signals(df: pl.DataFrame, fast_window: int = 20, slow_window: int = 60) -> pl.DataFrame:
+def add_moving_average_signals(
+    df: pl.DataFrame, fast_window: int = 20, slow_window: int = 60
+) -> pl.DataFrame:
     if fast_window <= 0 or slow_window <= 0:
         raise ValueError("MA windows must be positive integers.")
     if fast_window >= slow_window:

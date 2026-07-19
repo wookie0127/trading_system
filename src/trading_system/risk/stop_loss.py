@@ -4,7 +4,7 @@ class StopLossCalculator:
         side: str,  # "LONG" or "SHORT"
         entry_price: float,
         atr_14: float,
-        multiplier: float = 2.0
+        multiplier: float = 2.0,
     ) -> float:
         """
         Calculates deterministic stop loss price based on ATR multiplier.

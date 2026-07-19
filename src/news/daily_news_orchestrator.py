@@ -14,7 +14,6 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import httpx
-import yaml
 from dotenv import load_dotenv
 from prefect import flow, get_run_logger, task
 
@@ -200,9 +199,15 @@ async def summarize_with_openai(model: str, prompt: str) -> str:
 # 2. Gemini 백엔드 요약 기능
 # ==========================================
 def _gemini_api_key() -> str:
-    api_key = os.getenv("GEMINI_API") or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    api_key = (
+        os.getenv("GEMINI_API")
+        or os.getenv("GEMINI_API_KEY")
+        or os.getenv("GOOGLE_API_KEY")
+    )
     if not api_key:
-        raise RuntimeError("GEMINI_API, GEMINI_API_KEY, or GOOGLE_API_KEY is required for NEWS_LLM_BACKEND=gemini")
+        raise RuntimeError(
+            "GEMINI_API, GEMINI_API_KEY, or GOOGLE_API_KEY is required for NEWS_LLM_BACKEND=gemini"
+        )
     return api_key
 
 
@@ -215,7 +220,9 @@ def _extract_gemini_text(payload: dict) -> str:
     return "".join(str(part.get("text") or "") for part in parts).strip()
 
 
-async def summarize_with_gemini_api(model: str, prompt: str, timeout_seconds: int) -> str:
+async def summarize_with_gemini_api(
+    model: str, prompt: str, timeout_seconds: int
+) -> str:
     endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     payload = {
         "contents": [
@@ -243,7 +250,9 @@ async def summarize_with_gemini_api(model: str, prompt: str, timeout_seconds: in
             detail = error_payload.get("message") or response.text[:500]
         except Exception:
             detail = response.text[:500]
-        raise RuntimeError(f"Gemini API request failed: HTTP {response.status_code}: {detail}")
+        raise RuntimeError(
+            f"Gemini API request failed: HTTP {response.status_code}: {detail}"
+        )
 
     summary = _extract_gemini_text(response.json())
     if not summary:
@@ -269,11 +278,13 @@ def run_codex_cli(prompt: str, command: str, model: str, timeout_seconds: int) -
     if len(command_parts) > 1:
         cli_args.extend(command_parts[1:])
 
-    cli_args.extend([
-        "exec",
-        "--sandbox",
-        "read-only",
-    ])
+    cli_args.extend(
+        [
+            "exec",
+            "--sandbox",
+            "read-only",
+        ]
+    )
     if model:
         cli_args.extend(["--model", model])
     cli_args.append("-")
@@ -307,13 +318,15 @@ def run_agy_cli(prompt: str, command: str, model: str, timeout_seconds: int) -> 
     cli_args = command_parts[:]
     if model:
         cli_args.extend(["--model", model])
-    cli_args.extend([
-        "--sandbox",
-        "--print",
-        prompt,
-        "--print-timeout",
-        f"{timeout_seconds}s",
-    ])
+    cli_args.extend(
+        [
+            "--sandbox",
+            "--print",
+            prompt,
+            "--print-timeout",
+            f"{timeout_seconds}s",
+        ]
+    )
 
     completed = subprocess.run(
         cli_args,
@@ -507,12 +520,16 @@ async def summarize_news_task(
         raise RuntimeError("No news items were collected from RSS feeds")
 
     prompt = render_prompt(items, run_date, style=style)
-    logger.info(f"Sending {len(items)} headlines to {backend} (model={model or 'default'})")
+    logger.info(
+        f"Sending {len(items)} headlines to {backend} (model={model or 'default'})"
+    )
 
     if backend == "openai":
         return await summarize_with_openai(model=model, prompt=prompt)
     elif backend == "gemini":
-        return await summarize_with_gemini_api(model=model, prompt=prompt, timeout_seconds=timeout_seconds)
+        return await summarize_with_gemini_api(
+            model=model, prompt=prompt, timeout_seconds=timeout_seconds
+        )
     elif backend == "cmux-gemini":
         return run_cmux_gemini_pane(
             prompt=prompt,
@@ -609,26 +626,43 @@ async def daily_news_summary_flow(
     timeout_seconds: int | None = None,
 ):
     logger = get_run_logger()
-    resolved_backend = (backend or str(_config_value("NEWS_LLM_BACKEND", DEFAULT_BACKEND))).strip().lower()
+    resolved_backend = (
+        (backend or str(_config_value("NEWS_LLM_BACKEND", DEFAULT_BACKEND)))
+        .strip()
+        .lower()
+    )
     resolved_feeds = feed_urls or _config_list("NEWS_RSS_FEEDS", DEFAULT_FEEDS)
-    resolved_output_dir = output_dir or str(_config_value("NEWS_SUMMARY_DIR", DEFAULT_OUTPUT_DIR))
+    resolved_output_dir = output_dir or str(
+        _config_value("NEWS_SUMMARY_DIR", DEFAULT_OUTPUT_DIR)
+    )
     summary_setting = NEWS_CONFIGS.get("NEWS_SUMMARY_SETTING") or {}
-    resolved_obsidian_root = obsidian_root or os.getenv("OBSIDIAN_VAULT_DIR") or summary_setting.get("ROOT")
+    resolved_obsidian_root = (
+        obsidian_root or os.getenv("OBSIDIAN_VAULT_DIR") or summary_setting.get("ROOT")
+    )
     resolved_obsidian_subdir = (
         obsidian_subdir
         or os.getenv("NEWS_OBSIDIAN_SUBDIR")
         or summary_setting.get("SUBDIR")
         or DEFAULT_OBSIDIAN_SUBDIR
     )
-    resolved_max_items = max_items or int(_config_value("NEWS_MAX_ITEMS", DEFAULT_MAX_ITEMS))
+    resolved_max_items = max_items or int(
+        _config_value("NEWS_MAX_ITEMS", DEFAULT_MAX_ITEMS)
+    )
     resolved_style = prompt_style or str(
-        _config_value("NEWS_PROMPT_STYLE", "default" if resolved_backend == "openai" else "compact")
+        _config_value(
+            "NEWS_PROMPT_STYLE",
+            "default" if resolved_backend == "openai" else "compact",
+        )
     )
 
     if resolved_backend == "openai":
-        resolved_model = model or str(_config_value("OPENAI_MODEL", DEFAULT_OPENAI_MODEL))
+        resolved_model = model or str(
+            _config_value("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+        )
     elif resolved_backend in {"gemini", "cmux-gemini"}:
-        resolved_model = model or str(_config_value("GEMINI_MODEL", DEFAULT_GEMINI_MODEL))
+        resolved_model = model or str(
+            _config_value("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+        )
     elif resolved_backend == "codex":
         resolved_model = model or str(_config_value("CODEX_MODEL", DEFAULT_CODEX_MODEL))
     elif resolved_backend == "agy":
@@ -636,12 +670,31 @@ async def daily_news_summary_flow(
     else:
         resolved_model = model or ""
 
-    resolved_codex_cmd = codex_command or str(_config_value("CODEX_CLI_COMMAND", DEFAULT_CODEX_COMMAND))
-    resolved_agy_cmd = agy_command or str(_config_value("AGY_CLI_COMMAND", DEFAULT_AGY_COMMAND))
-    resolved_cmux_cmd = cmux_command or str(_config_value("CMUX_COMMAND", DEFAULT_CMUX_COMMAND))
-    resolved_cmux_workspace = cmux_workspace or os.getenv("CMUX_GEMINI_WORKSPACE") or NEWS_CONFIGS.get("CMUX_GEMINI_WORKSPACE")
-    resolved_cmux_surface = cmux_surface or os.getenv("CMUX_GEMINI_SURFACE") or NEWS_CONFIGS.get("CMUX_GEMINI_SURFACE")
-    resolved_timeout = timeout_seconds or int(_config_value("TIMEOUT_SECONDS", _config_value("GEMINI_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)))
+    resolved_codex_cmd = codex_command or str(
+        _config_value("CODEX_CLI_COMMAND", DEFAULT_CODEX_COMMAND)
+    )
+    resolved_agy_cmd = agy_command or str(
+        _config_value("AGY_CLI_COMMAND", DEFAULT_AGY_COMMAND)
+    )
+    resolved_cmux_cmd = cmux_command or str(
+        _config_value("CMUX_COMMAND", DEFAULT_CMUX_COMMAND)
+    )
+    resolved_cmux_workspace = (
+        cmux_workspace
+        or os.getenv("CMUX_GEMINI_WORKSPACE")
+        or NEWS_CONFIGS.get("CMUX_GEMINI_WORKSPACE")
+    )
+    resolved_cmux_surface = (
+        cmux_surface
+        or os.getenv("CMUX_GEMINI_SURFACE")
+        or NEWS_CONFIGS.get("CMUX_GEMINI_SURFACE")
+    )
+    resolved_timeout = timeout_seconds or int(
+        _config_value(
+            "TIMEOUT_SECONDS",
+            _config_value("GEMINI_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS),
+        )
+    )
 
     run_date = arrow.now(tz=_news_timezone().key).format("YYYY-MM-DD")
 

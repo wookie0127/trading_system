@@ -15,8 +15,9 @@ if str(SRC_DIR) not in sys.path:
 from backtest.engine import run_backtest, run_batch_backtests
 import importlib
 import dashboard.charts
+
 importlib.reload(dashboard.charts)
-from dashboard.charts import plot_drawdown, plot_equity_curve, plot_price_with_signals, plot_combined_backtest_chart
+from dashboard.charts import plot_combined_backtest_chart
 from dashboard.components import render_summary
 from dashboard.tables import render_compare_table, render_trade_table
 from data.market_data import (
@@ -28,18 +29,28 @@ from data.market_data import (
     symbol_lookup_key,
 )
 from strategies.parameters import StrategyParameter
-from strategies.registry import STRATEGY_REGISTRY, get_strategy_spec, instantiate_strategy
+from strategies.registry import (
+    STRATEGY_REGISTRY,
+    get_strategy_spec,
+    instantiate_strategy,
+)
 
 
-def render_strategy_parameters(parameters: tuple[StrategyParameter, ...]) -> dict[str, int | float | str]:
+def render_strategy_parameters(
+    parameters: tuple[StrategyParameter, ...],
+) -> dict[str, int | float | str]:
     values: dict[str, int | float | str] = {}
     for parameter in parameters:
         if parameter.value_type is int:
             values[parameter.key] = int(
                 st.number_input(
                     parameter.label,
-                    min_value=int(parameter.min_value) if parameter.min_value is not None else None,
-                    max_value=int(parameter.max_value) if parameter.max_value is not None else None,
+                    min_value=int(parameter.min_value)
+                    if parameter.min_value is not None
+                    else None,
+                    max_value=int(parameter.max_value)
+                    if parameter.max_value is not None
+                    else None,
                     value=int(parameter.default),
                     step=int(parameter.step or 1),
                     key=f"strategy_param_{parameter.key}",
@@ -49,8 +60,12 @@ def render_strategy_parameters(parameters: tuple[StrategyParameter, ...]) -> dic
             values[parameter.key] = float(
                 st.number_input(
                     parameter.label,
-                    min_value=float(parameter.min_value) if parameter.min_value is not None else None,
-                    max_value=float(parameter.max_value) if parameter.max_value is not None else None,
+                    min_value=float(parameter.min_value)
+                    if parameter.min_value is not None
+                    else None,
+                    max_value=float(parameter.max_value)
+                    if parameter.max_value is not None
+                    else None,
                     value=float(parameter.default),
                     step=float(parameter.step or 0.01),
                     format=parameter.format,
@@ -58,7 +73,11 @@ def render_strategy_parameters(parameters: tuple[StrategyParameter, ...]) -> dic
                 )
             )
         else:
-            values[parameter.key] = st.text_input(parameter.label, value=str(parameter.default), key=f"strategy_param_{parameter.key}")
+            values[parameter.key] = st.text_input(
+                parameter.label,
+                value=str(parameter.default),
+                key=f"strategy_param_{parameter.key}",
+            )
     return values
 
 
@@ -137,7 +156,9 @@ def render_config_summary(
         )
     )
     st.dataframe(
-        pl.DataFrame([{"parameter": key, "value": value} for key, value in parameters.items()]),
+        pl.DataFrame(
+            [{"parameter": key, "value": value} for key, value in parameters.items()]
+        ),
         use_container_width=True,
         hide_index=True,
     )
@@ -156,11 +177,13 @@ def render_dashboard() -> None:
 
     with st.sidebar:
         st.header("Backtest Config")
-        
+
         def format_root(p: Path) -> str:
             try:
                 rel = p.relative_to(SRC_DIR.parent)
-                return f"{p.name} (.../{rel.parent})" if str(rel.parent) != "." else p.name
+                return (
+                    f"{p.name} (.../{rel.parent})" if str(rel.parent) != "." else p.name
+                )
             except ValueError:
                 return p.name
 
@@ -168,27 +191,38 @@ def render_dashboard() -> None:
             "Data Path",
             options=roots,
             format_func=format_root,
-            help="Select a directory containing historical parquet data files. The selected full path is shown below."
+            help="Select a directory containing historical parquet data files. The selected full path is shown below.",
         )
         st.caption(f"**Selected path:** `{root}`")
-        
+
         available_dates = list_available_dates(root)
         if not available_dates:
             st.error("No parquet files found under the selected data path.")
             return
 
-        sample_df = pl.read_parquet(sorted(root.glob("*.parquet"))[-1], columns=["symbol"])
-        symbols = sorted(sample_df.select("symbol").unique().get_column("symbol").to_list())
-        
+        sample_df = pl.read_parquet(
+            sorted(root.glob("*.parquet"))[-1], columns=["symbol"]
+        )
+        symbols = sorted(
+            sample_df.select("symbol").unique().get_column("symbol").to_list()
+        )
+
         def format_symbol_label(val: str) -> str:
             name = symbol_names.get(symbol_lookup_key(val))
             return f"{name} ({val})" if name else str(val)
 
-        symbol = st.selectbox("Symbol", options=symbols, format_func=format_symbol_label)
+        symbol = st.selectbox(
+            "Symbol", options=symbols, format_func=format_symbol_label
+        )
 
         min_date = available_dates[0]
         max_date = available_dates[-1]
-        start_date, end_date = st.date_input("Date Range", value=(min_date, max_date), min_value=min_date, max_value=max_date)
+        start_date, end_date = st.date_input(
+            "Date Range",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date,
+        )
 
         st.header("Strategy")
         strategy_key = st.selectbox(
@@ -206,9 +240,25 @@ def render_dashboard() -> None:
         )
 
         st.header("Costs")
-        initial_balance = st.number_input("Initial Balance", min_value=100_000, value=1_000_000, step=100_000)
-        fee = st.number_input("Fee", min_value=0.0, max_value=0.05, value=0.0005, step=0.0001, format="%.5f")
-        slippage = st.number_input("Slippage", min_value=0.0, max_value=0.05, value=0.0005, step=0.0001, format="%.5f")
+        initial_balance = st.number_input(
+            "Initial Balance", min_value=100_000, value=1_000_000, step=100_000
+        )
+        fee = st.number_input(
+            "Fee",
+            min_value=0.0,
+            max_value=0.05,
+            value=0.0005,
+            step=0.0001,
+            format="%.5f",
+        )
+        slippage = st.number_input(
+            "Slippage",
+            min_value=0.0,
+            max_value=0.05,
+            value=0.0005,
+            step=0.0001,
+            format="%.5f",
+        )
         run_button = st.button("Run Backtest", type="primary")
 
     if start_date > end_date:
@@ -241,7 +291,9 @@ def render_dashboard() -> None:
         strategy_key=strategy_key,
         strategy_params=strategy_params,
         symbols=tuple(compare_symbols or [symbol]),
-        symbol_names={value: label_symbol(value, symbol_names) for value in selected_for_load},
+        symbol_names={
+            value: label_symbol(value, symbol_names) for value in selected_for_load
+        },
         initial_balance=float(initial_balance),
         fee=float(fee),
         slippage=float(slippage),
@@ -253,7 +305,7 @@ def render_dashboard() -> None:
         ohlcv=result.ohlcv,
         signals=result.signals,
         trades=result.trades,
-        equity_curve=result.equity_curve
+        equity_curve=result.equity_curve,
     )
     st.plotly_chart(combined_fig, use_container_width=True)
 

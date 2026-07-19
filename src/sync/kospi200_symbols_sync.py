@@ -24,7 +24,6 @@ Schema:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import sys
@@ -67,10 +66,7 @@ def _fetch_via_fdr() -> list[dict]:
     # 시총 기준 상위 TOP_N
     df = df.sort_values("Marcap", ascending=False).head(TOP_N)
 
-    return [
-        {"symbol": row["Code"], "name": row["Name"]}
-        for _, row in df.iterrows()
-    ]
+    return [{"symbol": row["Code"], "name": row["Name"]} for _, row in df.iterrows()]
 
 
 def load_symbols() -> dict:

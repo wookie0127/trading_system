@@ -8,7 +8,10 @@ KOSPI 200 전 종목 일괄 백필 스크립트
     uv run src/kospi200_bulk_backfill.py
     uv run src/kospi200_bulk_backfill.py --years 5 --days 30 --skip-intraday
 """
-import sys as _sys; from pathlib import Path as _Path
+
+import sys as _sys
+from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).parents[1]))  # src/ 패키지 루트
 del _sys, _Path
 
@@ -76,7 +79,12 @@ async def _get_kospi200_symbols() -> list[str]:
     return []
 
 
-async def bulk_backfill(years: int = 5, days: int = 30, skip_daily: bool = False, skip_intraday: bool = False):
+async def bulk_backfill(
+    years: int = 5,
+    days: int = 30,
+    skip_daily: bool = False,
+    skip_intraday: bool = False,
+):
     notifier = Notifier()
 
     # 1. KOSPI 200 구성종목 로드 (캐시 우선 → KRX fallback)
@@ -103,8 +111,10 @@ async def bulk_backfill(years: int = 5, days: int = 30, skip_daily: bool = False
         logger.info(f"[1/2] 일봉 {years}년치 수집 시작 (limit={limit} per stock)...")
         batch_size = 20  # API 부하를 줄이기 위해 20종목씩 배치 처리
         for i in range(0, total, batch_size):
-            batch = symbols[i:i + batch_size]
-            logger.info(f"  일봉 배치 {i+1}~{min(i+batch_size, total)}/{total} 처리 중...")
+            batch = symbols[i : i + batch_size]
+            logger.info(
+                f"  일봉 배치 {i + 1}~{min(i + batch_size, total)}/{total} 처리 중..."
+            )
             try:
                 await collect_daily_data(batch, limit=limit)
                 daily_success += len(batch)
@@ -113,7 +123,9 @@ async def bulk_backfill(years: int = 5, days: int = 30, skip_daily: bool = False
                 daily_failed += len(batch)
             await asyncio.sleep(1.0)  # API 딜레이
 
-        logger.success(f"일봉 수집 완료: 성공 {daily_success}개 / 실패 {daily_failed}개")
+        logger.success(
+            f"일봉 수집 완료: 성공 {daily_success}개 / 실패 {daily_failed}개"
+        )
 
     # 3. 1분봉 백필 (종목별 순차 처리)
     intraday_success = 0
@@ -150,15 +162,23 @@ async def bulk_backfill(years: int = 5, days: int = 30, skip_daily: bool = False
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="KOSPI 200 전 종목 일괄 백필")
-    parser.add_argument("--years", type=int, default=5, help="일봉 수집 연수 (기본 5년)")
-    parser.add_argument("--days", type=int, default=30, help="1분봉 수집 일수 (기본 30일, Yahoo 최대치)")
+    parser.add_argument(
+        "--years", type=int, default=5, help="일봉 수집 연수 (기본 5년)"
+    )
+    parser.add_argument(
+        "--days", type=int, default=30, help="1분봉 수집 일수 (기본 30일, Yahoo 최대치)"
+    )
     parser.add_argument("--skip-daily", action="store_true", help="일봉 수집 건너뜀")
-    parser.add_argument("--skip-intraday", action="store_true", help="1분봉 수집 건너뜀")
+    parser.add_argument(
+        "--skip-intraday", action="store_true", help="1분봉 수집 건너뜀"
+    )
     args = parser.parse_args()
 
-    asyncio.run(bulk_backfill(
-        years=args.years,
-        days=args.days,
-        skip_daily=args.skip_daily,
-        skip_intraday=args.skip_intraday
-    ))
+    asyncio.run(
+        bulk_backfill(
+            years=args.years,
+            days=args.days,
+            skip_daily=args.skip_daily,
+            skip_intraday=args.skip_intraday,
+        )
+    )

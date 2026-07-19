@@ -45,6 +45,15 @@ class USMarketShockInverseStrategy(BaseStrategy):
                 pl.lit(self.target_symbol).alias("symbol"),
                 pl.lit(self.name).alias("strategy"),
             )
-            .select(["date", "symbol", "strategy", "signal", "qqq_return_1d", "vix_change_1d"])
+            .select(
+                [
+                    "date",
+                    "symbol",
+                    "strategy",
+                    "signal",
+                    "qqq_return_1d",
+                    "vix_change_1d",
+                ]
+            )
             .sort("date")
         )

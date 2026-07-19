@@ -23,7 +23,9 @@ class BacktestAgent:
 
     def run(self) -> Path:
         config = self.backtest_config["backtest"]
-        prices = self.repository.read(Path(self.ticker_config["data"]["features_dir"]) / "feature_dataset.parquet")
+        prices = self.repository.read(
+            Path(self.ticker_config["data"]["features_dir"]) / "feature_dataset.parquet"
+        )
         engine = LongOnlyBacktestEngine(
             fee_rate=config.get("fee_rate", 0.0005),
             slippage_rate=config.get("slippage_rate", 0.0005),

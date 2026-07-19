@@ -30,9 +30,12 @@ KIS API 없이 yfinance만으로 수집 가능한 데이터:
   uv run python src/yahoo_finance_collector.py --step kospi200_intraday
   uv run python src/yahoo_finance_collector.py --step kospi200_daily --start 2020-01-01
 """
+
 from __future__ import annotations
 
-import sys as _sys; from pathlib import Path as _Path
+import sys as _sys
+from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).parents[2]))  # src/ 패키지 루트
 del _sys, _Path
 
@@ -53,33 +56,33 @@ from storage.parquet_writer import MARKET_DATA_DIR, daily_path, write_parquet
 
 # 수집 대상 US 지수
 US_INDICES: dict[str, str] = {
-    "^IXIC": "nasdaq_1min",   # NASDAQ Composite
-    "^NDX":  "nasdaq_1min",   # NASDAQ 100  (같은 폴더에 함께 저장)
-    "^GSPC": "nasdaq_1min",   # S&P 500
-    "NQ=F":  "nasdaq_1min",   # NASDAQ Futures
-    "ES=F":  "nasdaq_1min",   # S&P 500 Futures
+    "^IXIC": "nasdaq_1min",  # NASDAQ Composite
+    "^NDX": "nasdaq_1min",  # NASDAQ 100  (같은 폴더에 함께 저장)
+    "^GSPC": "nasdaq_1min",  # S&P 500
+    "NQ=F": "nasdaq_1min",  # NASDAQ Futures
+    "ES=F": "nasdaq_1min",  # S&P 500 Futures
 }
 
 # 수집 대상 US 일봉 (지수, ETF 등)
 US_DAILY_SYMBOLS: list[str] = [
     "^IXIC",  # NASDAQ Composite
-    "^NDX",   # NASDAQ 100
+    "^NDX",  # NASDAQ 100
     "^GSPC",  # S&P 500
-    "QQQ",    # Invesco QQQ Trust
-    "NQ=F",   # NASDAQ Futures
-    "ES=F",   # S&P 500 Futures
+    "QQQ",  # Invesco QQQ Trust
+    "NQ=F",  # NASDAQ Futures
+    "ES=F",  # S&P 500 Futures
 ]
 
 # 글로벌 자산 (환율, 원자재, 변동성, 암호화폐)
 GLOBAL_ASSETS: dict[str, str] = {
-    "USDKRW=X": "fx_usdkrw",    # 원/달러 환율
-    "JPYKRW=X": "fx_jpykrw",    # 원/엔 환율 (100엔 기준 환산 필요할 수 있음)
-    "DX-Y.NYB": "dollar_index", # 달러 지수
-    "CL=F":     "wti_crude",    # WTI 원유 선물
-    "GC=F":     "gold_price",   # 금 선물
-    "^VIX":     "vix_index",    # VIX (변동성 지수)
-    "BTC-USD":  "crypto_btc",   # 비트코인
-    "ETH-USD":  "crypto_eth",   # 이더리움
+    "USDKRW=X": "fx_usdkrw",  # 원/달러 환율
+    "JPYKRW=X": "fx_jpykrw",  # 원/엔 환율 (100엔 기준 환산 필요할 수 있음)
+    "DX-Y.NYB": "dollar_index",  # 달러 지수
+    "CL=F": "wti_crude",  # WTI 원유 선물
+    "GC=F": "gold_price",  # 금 선물
+    "^VIX": "vix_index",  # VIX (변동성 지수)
+    "BTC-USD": "crypto_btc",  # 비트코인
+    "ETH-USD": "crypto_eth",  # 이더리움
 }
 
 # 장마감 후 같이 수집할 글로벌 1분봉 대상.
@@ -99,13 +102,13 @@ _MAX_DAYS_PER_CHUNK = 7
 _BATCH_SIZE = 50
 
 _PARQUET_WRITER_PATHS: dict[str, Path] = {
-    "nasdaq_1min":           MARKET_DATA_DIR / "us" / "nasdaq" / "1min",
-    "us_daily":              MARKET_DATA_DIR / "us" / "daily",
-    "global_daily":          MARKET_DATA_DIR / "global" / "daily",
-    "global_1min":           MARKET_DATA_DIR / "global" / "1min",
-    "crypto_1min":           MARKET_DATA_DIR / "crypto" / "1min",
-    "kospi200_1min":         MARKET_DATA_DIR / "kr" / "kospi200" / "1min",
-    "kospi200_daily_yf":     MARKET_DATA_DIR / "kr" / "kospi200" / "daily",
+    "nasdaq_1min": MARKET_DATA_DIR / "us" / "nasdaq" / "1min",
+    "us_daily": MARKET_DATA_DIR / "us" / "daily",
+    "global_daily": MARKET_DATA_DIR / "global" / "daily",
+    "global_1min": MARKET_DATA_DIR / "global" / "1min",
+    "crypto_1min": MARKET_DATA_DIR / "crypto" / "1min",
+    "kospi200_1min": MARKET_DATA_DIR / "kr" / "kospi200" / "1min",
+    "kospi200_daily_yf": MARKET_DATA_DIR / "kr" / "kospi200" / "daily",
 }
 
 # KOSPI200 일봉 저장 경로
@@ -115,6 +118,7 @@ _KOSPI200_DAILY_DIR = MARKET_DATA_DIR / "kr" / "kospi200" / "daily"
 # ──────────────────────────────────────────────
 # 헬퍼
 # ──────────────────────────────────────────────
+
 
 def _to_yf_kr(code: str) -> str:
     """6자리 종목코드 → yfinance 한국 심볼 (예: 005930 → 005930.KS)."""
@@ -194,17 +198,21 @@ def _download_1min(
         if sub.empty:
             continue
         sub = sub.reset_index()
-        sub = sub.rename(columns={
-            "Datetime": "timestamp",
-            "Date": "timestamp",
-            "Open": "open",
-            "High": "high",
-            "Low": "low",
-            "Close": "close",
-            "Volume": "volume",
-        })
+        sub = sub.rename(
+            columns={
+                "Datetime": "timestamp",
+                "Date": "timestamp",
+                "Open": "open",
+                "High": "high",
+                "Low": "low",
+                "Close": "close",
+                "Volume": "volume",
+            }
+        )
         sub["symbol"] = sym
-        frames.append(sub[["timestamp", "symbol", "open", "high", "low", "close", "volume"]])
+        frames.append(
+            sub[["timestamp", "symbol", "open", "high", "low", "close", "volume"]]
+        )
 
     if not frames:
         return pd.DataFrame()
@@ -245,17 +253,32 @@ def _download_daily(
 
     if len(symbols) == 1:
         df = _extract_symbol_frame(raw, symbols[0]).reset_index()
-        df = df.rename(columns={
-            "Date": "timestamp",
-            "Open": "open",
-            "High": "high",
-            "Low": "low",
-            "Close": "close",
-            "Volume": "volume",
-        })
+        df = df.rename(
+            columns={
+                "Date": "timestamp",
+                "Open": "open",
+                "High": "high",
+                "Low": "low",
+                "Close": "close",
+                "Volume": "volume",
+            }
+        )
         df["symbol"] = symbols[0]
         df["trade_value"] = df["close"] * df["volume"]
-        frames.append(df[["timestamp", "symbol", "open", "high", "low", "close", "volume", "trade_value"]])
+        frames.append(
+            df[
+                [
+                    "timestamp",
+                    "symbol",
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "volume",
+                    "trade_value",
+                ]
+            ]
+        )
     else:
         for sym in symbols:
             try:
@@ -266,17 +289,32 @@ def _download_daily(
             if sub.empty:
                 continue
             sub = sub.reset_index()
-            sub = sub.rename(columns={
-                "Date": "timestamp",
-                "Open": "open",
-                "High": "high",
-                "Low": "low",
-                "Close": "close",
-                "Volume": "volume",
-            })
+            sub = sub.rename(
+                columns={
+                    "Date": "timestamp",
+                    "Open": "open",
+                    "High": "high",
+                    "Low": "low",
+                    "Close": "close",
+                    "Volume": "volume",
+                }
+            )
             sub["symbol"] = sym
             sub["trade_value"] = sub["close"] * sub["volume"]
-            frames.append(sub[["timestamp", "symbol", "open", "high", "low", "close", "volume", "trade_value"]])
+            frames.append(
+                sub[
+                    [
+                        "timestamp",
+                        "symbol",
+                        "open",
+                        "high",
+                        "low",
+                        "close",
+                        "volume",
+                        "trade_value",
+                    ]
+                ]
+            )
 
     if not frames:
         return pd.DataFrame()
@@ -294,6 +332,7 @@ def _batches(items: list, size: int):
 # ──────────────────────────────────────────────
 # US 지수 수집
 # ──────────────────────────────────────────────
+
 
 async def collect_us_indices(
     symbols: list[str] | None = None,
@@ -346,6 +385,7 @@ async def collect_us_indices(
 # US 일봉 (장기 히스토리 백필)
 # ──────────────────────────────────────────────
 
+
 async def collect_us_daily(
     start: date,
     end: date | None = None,
@@ -393,6 +433,7 @@ async def collect_us_daily(
 # ──────────────────────────────────────────────
 # 글로벌 자산 일봉 (장기 히스토리 백필)
 # ──────────────────────────────────────────────
+
 
 async def collect_global_assets(
     start: date,
@@ -450,7 +491,11 @@ async def collect_global_intraday(
     if trade_date is None:
         trade_date = date.today()
 
-    target_symbols = [s.strip().upper() for s in (symbols or list(GLOBAL_INTRADAY_SYMBOLS)) if s and s.strip()]
+    target_symbols = [
+        s.strip().upper()
+        for s in (symbols or list(GLOBAL_INTRADAY_SYMBOLS))
+        if s and s.strip()
+    ]
     if not target_symbols:
         logger.error("수집할 글로벌 1분봉 심볼이 없습니다.")
         return
@@ -470,10 +515,16 @@ async def collect_global_intraday(
         if df.empty:
             continue
 
-        for storage_key, key_df in df.groupby(df["symbol"].map(lambda sym: GLOBAL_INTRADAY_SYMBOLS.get(sym, "global_1min"))):
+        for storage_key, key_df in df.groupby(
+            df["symbol"].map(
+                lambda sym: GLOBAL_INTRADAY_SYMBOLS.get(sym, "global_1min")
+            )
+        ):
             dest = daily_path(storage_key, str(trade_date))
             write_parquet(key_df.reset_index(drop=True), dest)
-            total_rows_by_key[storage_key] = total_rows_by_key.get(storage_key, 0) + len(key_df)
+            total_rows_by_key[storage_key] = total_rows_by_key.get(
+                storage_key, 0
+            ) + len(key_df)
 
         await asyncio.sleep(1.0)
 
@@ -484,6 +535,7 @@ async def collect_global_intraday(
 # KOSPI200 1분봉 수집
 # ──────────────────────────────────────────────
 
+
 def _load_component_codes(target_date: date) -> list[str]:
     """
     저장된 KOSPI200 구성종목 파일에서 코드 목록을 읽어 .KS 심볼로 변환.
@@ -492,7 +544,9 @@ def _load_component_codes(target_date: date) -> list[str]:
     """
     import pyarrow.parquet as pq
 
-    path = MARKET_DATA_DIR / "metadata" / "kospi200_components" / f"{target_date}.parquet"
+    path = (
+        MARKET_DATA_DIR / "metadata" / "kospi200_components" / f"{target_date}.parquet"
+    )
     if not path.exists():
         logger.warning(
             f"구성종목 파일 없음: {path}\n"
@@ -563,7 +617,9 @@ async def collect_us_stock_intraday(
     if trade_date is None:
         trade_date = date.today()
 
-    target_symbols = [s.strip().upper() for s in (symbols or ["QQQ"]) if s and s.strip()]
+    target_symbols = [
+        s.strip().upper() for s in (symbols or ["QQQ"]) if s and s.strip()
+    ]
     if not target_symbols:
         logger.error("수집할 미국 종목 심볼이 없습니다.")
         return
@@ -595,6 +651,7 @@ async def collect_us_stock_intraday(
 # ──────────────────────────────────────────────
 # KOSPI200 일봉 (장기 히스토리 백필)
 # ──────────────────────────────────────────────
+
 
 async def collect_kospi200_daily(
     start: date,
@@ -639,7 +696,7 @@ async def collect_kospi200_daily(
             logger.warning(f"  배치 {i}: 데이터 없음")
             continue
 
-        df = validate_intraday(df)   # 가격/볼륨 검증 재사용
+        df = validate_intraday(df)  # 가격/볼륨 검증 재사용
         if df.empty:
             continue
 
@@ -657,6 +714,7 @@ async def collect_kospi200_daily(
 # ──────────────────────────────────────────────
 # 전체 파이프라인
 # ──────────────────────────────────────────────
+
 
 async def collect_all_yahoo(trade_date: date | None = None) -> None:
     """Yahoo Finance로 수집 가능한 전체 데이터를 수집."""
@@ -708,12 +766,21 @@ if __name__ == "__main__":
   python yahoo_finance_collector.py --step us_indices --symbols '^IXIC,^GSPC'
         """,
     )
-    parser.add_argument("--date", default=None, help="기준 날짜 YYYY-MM-DD (기본: 오늘)")
+    parser.add_argument(
+        "--date", default=None, help="기준 날짜 YYYY-MM-DD (기본: 오늘)"
+    )
     parser.add_argument("--start", default=None, help="시작 날짜 YYYY-MM-DD")
     parser.add_argument("--end", default=None, help="종료 날짜 YYYY-MM-DD")
     parser.add_argument(
         "--step",
-        choices=["us_indices", "us_daily", "global_daily", "global_intraday", "kospi200_intraday", "kospi200_daily"],
+        choices=[
+            "us_indices",
+            "us_daily",
+            "global_daily",
+            "global_intraday",
+            "kospi200_intraday",
+            "kospi200_daily",
+        ],
         default=None,
         help="단일 스텝 실행",
     )

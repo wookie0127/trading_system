@@ -20,8 +20,14 @@ def build_feature_dataset(raw_data: pl.DataFrame) -> pl.DataFrame:
         )
         .with_columns(
             pl.col("return_1d").rolling_std(20).over("symbol").alias("volatility_20d"),
-            pl.when(pl.col("_delta") > 0).then(pl.col("_delta")).otherwise(0.0).alias("_gain"),
-            pl.when(pl.col("_delta") < 0).then(-pl.col("_delta")).otherwise(0.0).alias("_loss"),
+            pl.when(pl.col("_delta") > 0)
+            .then(pl.col("_delta"))
+            .otherwise(0.0)
+            .alias("_gain"),
+            pl.when(pl.col("_delta") < 0)
+            .then(-pl.col("_delta"))
+            .otherwise(0.0)
+            .alias("_loss"),
         )
         .with_columns(
             pl.col("_gain").rolling_mean(14).over("symbol").alias("_avg_gain"),
@@ -30,7 +36,10 @@ def build_feature_dataset(raw_data: pl.DataFrame) -> pl.DataFrame:
         .with_columns(
             (
                 100
-                - (100 / (1 + (pl.col("_avg_gain") / pl.col("_avg_loss").replace(0, None))))
+                - (
+                    100
+                    / (1 + (pl.col("_avg_gain") / pl.col("_avg_loss").replace(0, None)))
+                )
             ).alias("rsi_14")
         )
         .drop(["_delta", "_gain", "_loss", "_avg_gain", "_avg_loss"])
@@ -39,7 +48,9 @@ def build_feature_dataset(raw_data: pl.DataFrame) -> pl.DataFrame:
     context = (
         features.select(["date", "symbol", "return_1d"])
         .filter(pl.col("symbol").is_in(["vix", "usdkrw", "btc"]))
-        .pivot(index="date", on="symbol", values="return_1d", aggregate_function="first")
+        .pivot(
+            index="date", on="symbol", values="return_1d", aggregate_function="first"
+        )
         .rename(
             {
                 "vix": "vix_change_1d",
@@ -53,11 +64,8 @@ def build_feature_dataset(raw_data: pl.DataFrame) -> pl.DataFrame:
         if col not in context.columns:
             context = context.with_columns(pl.lit(None, dtype=pl.Float64).alias(col))
 
-    return (
-        features.join(
-            context.select(["date", "vix_change_1d", "usdkrw_change_1d", "btc_return_1d"]),
-            on="date",
-            how="left",
-        )
-        .sort(["date", "symbol"])
-    )
+    return features.join(
+        context.select(["date", "vix_change_1d", "usdkrw_change_1d", "btc_return_1d"]),
+        on="date",
+        how="left",
+    ).sort(["date", "symbol"])

@@ -10,6 +10,7 @@ from strategies.ma_goldencross import MovingAverageGoldenCrossStrategy
 
 StrategyStatus = Literal["stable", "experimental", "deprecated"]
 
+
 @dataclass(frozen=True)
 class StrategySpec:
     key: str
@@ -33,7 +34,7 @@ STRATEGY_REGISTRY: dict[str, StrategySpec] = {
                 min_value=2,
                 max_value=240,
                 step=1,
-                value_type=int
+                value_type=int,
             ),
             StrategyParameter(
                 key="slow_window",
@@ -42,7 +43,7 @@ STRATEGY_REGISTRY: dict[str, StrategySpec] = {
                 min_value=3,
                 max_value=480,
                 step=1,
-                value_type=int
+                value_type=int,
             ),
         ),
         status="experimental",
@@ -60,7 +61,7 @@ STRATEGY_REGISTRY: dict[str, StrategySpec] = {
                 min_value=1,
                 max_value=240,
                 step=1,
-                value_type=int
+                value_type=int,
             ),
             StrategyParameter(
                 key="long_ma_period",
@@ -69,7 +70,7 @@ STRATEGY_REGISTRY: dict[str, StrategySpec] = {
                 min_value=2,
                 max_value=480,
                 step=1,
-                value_type=int
+                value_type=int,
             ),
         ),
         status="experimental",

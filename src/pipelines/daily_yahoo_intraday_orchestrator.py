@@ -19,7 +19,18 @@ from collectors.us.yahoo_finance_collector import (
 )
 from sync.kospi200_symbols_sync import get_symbol_list, sync_kospi200_symbols
 
-DEFAULT_US_SYMBOLS = ["SPY", "QQQ", "IWM", "XLK", "XLF", "TLT", "GLD", "IBIT", "NQ=F", "ES=F"]
+DEFAULT_US_SYMBOLS = [
+    "SPY",
+    "QQQ",
+    "IWM",
+    "XLK",
+    "XLF",
+    "TLT",
+    "GLD",
+    "IBIT",
+    "NQ=F",
+    "ES=F",
+]
 DEFAULT_GLOBAL_INTRADAY_SYMBOLS = list(GLOBAL_INTRADAY_SYMBOLS)
 
 
@@ -38,7 +49,9 @@ async def fetch_components_task(target_date: date) -> None:
 
 
 @task(name="Collect KOSPI 200 Intraday (Yahoo)", retries=2, retry_delay_seconds=60)
-async def collect_kospi200_intraday_task(target_date: date, codes: list[str] | None = None) -> None:
+async def collect_kospi200_intraday_task(
+    target_date: date, codes: list[str] | None = None
+) -> None:
     logger = get_run_logger()
     logger.info(
         f"Collecting KOSPI 200 1-min data via yfinance for {target_date} "
@@ -57,7 +70,9 @@ async def collect_us_intraday_task(target_date: date, symbols: list[str]) -> Non
 @task(name="Collect Global/Crypto Intraday (Yahoo)", retries=2, retry_delay_seconds=60)
 async def collect_global_intraday_task(target_date: date, symbols: list[str]) -> None:
     logger = get_run_logger()
-    logger.info(f"Collecting global/crypto 1-min data via yfinance for {target_date}: {symbols}")
+    logger.info(
+        f"Collecting global/crypto 1-min data via yfinance for {target_date}: {symbols}"
+    )
     await collect_global_intraday(trade_date=target_date, symbols=symbols)
 
 
@@ -126,7 +141,9 @@ async def daily_yahoo_intraday_flow(
         await collect_us_intraday_task(resolved_us_date, resolved_us_symbols)
 
         current_step = "collect_global_intraday"
-        await collect_global_intraday_task(resolved_global_date, resolved_global_symbols)
+        await collect_global_intraday_task(
+            resolved_global_date, resolved_global_symbols
+        )
 
         msg = (
             "✅ *[Market Data]* Yahoo 1분봉 수집 완료: "

@@ -1,4 +1,6 @@
-import sys as _sys; from pathlib import Path as _Path
+import sys as _sys
+from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).parents[1]))  # src/ 패키지 루트
 del _sys, _Path
 
@@ -75,7 +77,9 @@ class MarketHandler(KISAuthHandler):
         super().__init__()
         self.exchange = exchange
         if self.credential_profile == "paper":
-            self.account_number, self.account_product_code = self._resolve_paper_market_account(exchange)
+            self.account_number, self.account_product_code = (
+                self._resolve_paper_market_account(exchange)
+            )
 
         self.reference_dir = CURRENT_DIR.parent.parent / "data" / "reference"
         self.reference_dir.mkdir(parents=True, exist_ok=True)
@@ -94,7 +98,10 @@ class MarketHandler(KISAuthHandler):
             self.acc_no_postfix = prdt_cd.zfill(2)
 
         if not self.acc_no_prefix:
-            logger.warning("No KIS account number configured for profile={}", self.credential_profile)
+            logger.warning(
+                "No KIS account number configured for profile={}",
+                self.credential_profile,
+            )
 
     def _resolve_paper_market_account(self, exchange: str) -> tuple[str, str]:
         if exchange == "서울":
@@ -172,10 +179,14 @@ class MarketHandler(KISAuthHandler):
         if refreshed_records:
             return refreshed_records[0].get("code")
 
-        logger.warning(f"No code found for company: {company_name.strip()} candidates={candidates}")
+        logger.warning(
+            f"No code found for company: {company_name.strip()} candidates={candidates}"
+        )
         return None
 
-    def search_symbols(self, query: str, limit: int = 20, refresh: bool = False) -> list[dict]:
+    def search_symbols(
+        self, query: str, limit: int = 20, refresh: bool = False
+    ) -> list[dict]:
         """로컬 캐시와 KRX 전체 종목 캐시를 이용해 종목 검색"""
         if refresh:
             try:
@@ -205,7 +216,9 @@ class MarketHandler(KISAuthHandler):
             records = self._fetch_krx_codes_from_pykrx()
 
         if not records:
-            raise RuntimeError("Failed to refresh KRX symbol cache from both FDR and pykrx")
+            raise RuntimeError(
+                "Failed to refresh KRX symbol cache from both FDR and pykrx"
+            )
 
         normalized = self._dedupe_code_records(records)
         with open(self.krx_code_cache_path, "w", encoding="utf-8") as f:
@@ -305,7 +318,9 @@ class MarketHandler(KISAuthHandler):
 
         return candidates
 
-    def _search_code_records(self, candidates: list[str], limit: int = 20) -> list[dict]:
+    def _search_code_records(
+        self, candidates: list[str], limit: int = 20
+    ) -> list[dict]:
         exact_matches: list[dict] = []
         partial_matches: list[dict] = []
 
@@ -313,7 +328,13 @@ class MarketHandler(KISAuthHandler):
             code = str(stock.get("code") or "")
             ko_name = str(stock.get("ko_name") or "")
             en_name = str(stock.get("en_name") or "")
-            searchable = [code, ko_name, en_name, ko_name.replace(" ", ""), en_name.replace(" ", "")]
+            searchable = [
+                code,
+                ko_name,
+                en_name,
+                ko_name.replace(" ", ""),
+                en_name.replace(" ", ""),
+            ]
 
             for candidate in candidates:
                 if any(value == candidate for value in searchable if value):
@@ -401,7 +422,9 @@ class MarketHandler(KISAuthHandler):
             params=params,
         )
 
-    def fetch_domestic_future_price(self, shtn_pdno: str, market_cls_code: str = "MKI") -> int:
+    def fetch_domestic_future_price(
+        self, shtn_pdno: str, market_cls_code: str = "MKI"
+    ) -> int:
         """국내 지수선물 현재가 조회"""
         data = self.fetch_domestic_future_board(market_cls_code=market_cls_code)
         rows = data.get("output") or data.get("output1") or []
@@ -411,17 +434,27 @@ class MarketHandler(KISAuthHandler):
         for row in rows:
             if not isinstance(row, dict):
                 continue
-            row_code = str(row.get("futs_shrn_iscd") or row.get("shrn_iscd") or "").strip()
+            row_code = str(
+                row.get("futs_shrn_iscd") or row.get("shrn_iscd") or ""
+            ).strip()
             if row_code and row_code != shtn_pdno:
                 continue
-            price = self._to_int(row.get("futs_prpr") or row.get("futs_antc_cnpr") or row.get("stck_prpr"))
+            price = self._to_int(
+                row.get("futs_prpr")
+                or row.get("futs_antc_cnpr")
+                or row.get("stck_prpr")
+            )
             if price > 0:
                 return price
 
         if rows:
             row = rows[0]
             if isinstance(row, dict):
-                return self._to_int(row.get("futs_prpr") or row.get("futs_antc_cnpr") or row.get("stck_prpr"))
+                return self._to_int(
+                    row.get("futs_prpr")
+                    or row.get("futs_antc_cnpr")
+                    or row.get("stck_prpr")
+                )
         return 0
 
     def fetch_oversea_price(self, symbol: str) -> dict:
@@ -437,45 +470,65 @@ class MarketHandler(KISAuthHandler):
             params=params,
         )
 
-    def fetch_ohlcv(self, symbol: str, timeframe: str = "D", start_day: str = "", end_day: str = "", adj_price: bool = True, limit: int = 100) -> list[dict]:
+    def fetch_ohlcv(
+        self,
+        symbol: str,
+        timeframe: str = "D",
+        start_day: str = "",
+        end_day: str = "",
+        adj_price: bool = True,
+        limit: int = 100,
+    ) -> list[dict]:
         """과거 주가 데이터 조회 (OHLCV) - 페이지네이션 지원"""
         all_data = []
         current_end_day = end_day if end_day else time.strftime("%Y%m%d")
-        
+
         # 반복 호출로 데이터 수집 (한 번에 100개씩)
         while len(all_data) < limit:
             if self.exchange == "서울":
-                data = self.fetch_domestic_ohlcv(symbol, timeframe, start_day, current_end_day, adj_price)
+                data = self.fetch_domestic_ohlcv(
+                    symbol, timeframe, start_day, current_end_day, adj_price
+                )
             else:
-                data = self.fetch_oversea_ohlcv(symbol, timeframe, start_day, current_end_day, adj_price)
-            
+                data = self.fetch_oversea_ohlcv(
+                    symbol, timeframe, start_day, current_end_day, adj_price
+                )
+
             if not data:
                 break
-            
+
             all_data.extend(data)
-            
+
             # 더 이상 가져올 데이터가 없거나 100개 미만이면 종료
             if len(data) < 100:
                 break
-            
+
             # 다음 조회를 위해 마지막 날짜 업데이트 (가장 예전 날짜의 하루 전)
             last_date_str = data[-1].get("stck_bsop_date") or data[-1].get("xymd")
             if not last_date_str:
                 break
-                
+
             from datetime import datetime, timedelta
+
             last_dt = datetime.strptime(last_date_str, "%Y%m%d")
             current_end_day = (last_dt - timedelta(days=1)).strftime("%Y%m%d")
-            
+
             # 시작일보다 이전으로 넘어가면 종료
             if start_day and current_end_day < start_day:
                 break
-                
-            time.sleep(0.1) # 안정적인 수집을 위한 짧은 대기
+
+            time.sleep(0.1)  # 안정적인 수집을 위한 짧은 대기
 
         return all_data[:limit]
 
-    def fetch_domestic_ohlcv(self, symbol: str, timeframe: str = "D", start_day: str = "", end_day: str = "", adj_price: bool = True) -> list[dict]:
+    def fetch_domestic_ohlcv(
+        self,
+        symbol: str,
+        timeframe: str = "D",
+        start_day: str = "",
+        end_day: str = "",
+        adj_price: bool = True,
+    ) -> list[dict]:
         """국내 주식 일/주/월봉 조회 (단일 페이지 100건)"""
         endpoint = "uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
         headers = {
@@ -485,7 +538,7 @@ class MarketHandler(KISAuthHandler):
             "appsecret": self.app_secret,
             "tr_id": "FHKST03010100",
         }
-        
+
         params = {
             "FID_COND_MRKT_DIV_CODE": "J",
             "FID_INPUT_ISCD": symbol,
@@ -494,10 +547,19 @@ class MarketHandler(KISAuthHandler):
             "FID_PERIOD_DIV_CODE": timeframe,
             "FID_ORG_ADJ_PRC": "0" if adj_price else "1",
         }
-        res = httpx.get(f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10)
+        res = httpx.get(
+            f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10
+        )
         return res.json().get("output2", [])
 
-    def fetch_oversea_ohlcv(self, symbol: str, timeframe: str = "D", start_day: str = "", end_day: str = "", adj_price: bool = True) -> list[dict]:
+    def fetch_oversea_ohlcv(
+        self,
+        symbol: str,
+        timeframe: str = "D",
+        start_day: str = "",
+        end_day: str = "",
+        adj_price: bool = True,
+    ) -> list[dict]:
         """해외 주식 일/주/월봉 조회 (단일 페이지 100건)"""
         endpoint = "uapi/overseas-price/v1/quotations/dailyprice"
         headers = {
@@ -508,7 +570,7 @@ class MarketHandler(KISAuthHandler):
             "tr_id": "HHDFS76240000",
         }
         excd = "NAS" if self.exchange == "나스닥" else "NYS"
-        
+
         params = {
             "AUTH": "",
             "EXCD": excd,
@@ -517,10 +579,14 @@ class MarketHandler(KISAuthHandler):
             "BYMD": end_day if end_day else time.strftime("%Y%m%d"),
             "MODP": "1" if adj_price else "0",
         }
-        res = httpx.get(f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10)
+        res = httpx.get(
+            f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10
+        )
         return res.json().get("output2", [])
 
-    def fetch_oversea_index_ohlcv(self, symbol: str, timeframe: str = "D", start_day: str = "", end_day: str = "") -> list[dict]:
+    def fetch_oversea_index_ohlcv(
+        self, symbol: str, timeframe: str = "D", start_day: str = "", end_day: str = ""
+    ) -> list[dict]:
         """해외 지수(나스닥, S&P500 등) 일/주/월봉 조회"""
         endpoint = "uapi/overseas-price/v1/quotations/inquire-daily-chartprice"
         headers = {
@@ -530,20 +596,22 @@ class MarketHandler(KISAuthHandler):
             "appsecret": self.app_secret,
             "tr_id": "FHKST03030100",
         }
-        
+
         params = {
             "FID_COND_MRKT_DIV_CODE": "N",
-            "FID_INPUT_ISCD": symbol, # 예: .COMP, .SPX 등
+            "FID_INPUT_ISCD": symbol,  # 예: .COMP, .SPX 등
             "FID_INPUT_DATE_1": start_day if start_day else "20100101",
             "FID_INPUT_DATE_2": end_day if end_day else time.strftime("%Y%m%d"),
             "FID_PERIOD_DIV_CODE": timeframe,
         }
-        res = httpx.get(f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10)
+        res = httpx.get(
+            f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10
+        )
         data = res.json()
-        
+
         if data.get("rt_cd") != "0":
             logger.error(f"KIS Index API Error: {data.get('msg1')} (Symbol: {symbol})")
-            
+
         return data.get("output2", [])
 
     def fetch_balance(self) -> dict:
@@ -577,19 +645,23 @@ class MarketHandler(KISAuthHandler):
             if data.get("tr_cont") in ["M", "D"]:
                 fk100 = data.get("ctx_area_fk100", "")
                 nk100 = data.get("ctx_area_nk100", "")
-                time.sleep(0.2) # API 과부하 방지
+                time.sleep(0.2)  # API 과부하 방지
             else:
                 break
         return output
 
-    def fetch_intraday_candles(self, symbol: str, timeframe: str = "1", end_time: str = "") -> list[dict]:
+    def fetch_intraday_candles(
+        self, symbol: str, timeframe: str = "1", end_time: str = ""
+    ) -> list[dict]:
         """분봉 데이터 조회 (국내/해외 통합)"""
         if self.exchange == "서울":
             return self.fetch_domestic_intraday(symbol, timeframe, end_time)
         else:
             return self.fetch_oversea_intraday(symbol, timeframe, end_time)
 
-    def fetch_domestic_intraday(self, symbol: str, timeframe: str = "1", end_time: str = "") -> list[dict]:
+    def fetch_domestic_intraday(
+        self, symbol: str, timeframe: str = "1", end_time: str = ""
+    ) -> list[dict]:
         """국내 주식 당일 분봉 조회 (1분, 3분, 5분 등)"""
         endpoint = "uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
         headers = {
@@ -606,10 +678,14 @@ class MarketHandler(KISAuthHandler):
             "FID_ETC_CLS_CODE": "",
             "FID_PW_DATA_INCU_YN": "Y",
         }
-        res = httpx.get(f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10)
+        res = httpx.get(
+            f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10
+        )
         return res.json().get("output2", [])
 
-    def fetch_oversea_intraday(self, symbol: str, timeframe: str = "1", end_time: str = "") -> list[dict]:
+    def fetch_oversea_intraday(
+        self, symbol: str, timeframe: str = "1", end_time: str = ""
+    ) -> list[dict]:
         """해외 주식 당일 분봉 조회"""
         endpoint = "uapi/overseas-stock/v1/quotations/inquire-time-itemchartprice"
         headers = {
@@ -626,7 +702,9 @@ class MarketHandler(KISAuthHandler):
             "SYMB": symbol,
             "TM": end_time,
         }
-        res = httpx.get(f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10)
+        res = httpx.get(
+            f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10
+        )
         return res.json().get("output2", [])
 
     def fetch_investor_flow(self, symbol: str, end_time: str = "") -> list[dict]:
@@ -643,7 +721,9 @@ class MarketHandler(KISAuthHandler):
             "FID_COND_MRKT_DIV_CODE": "J",
             "FID_INPUT_ISCD": symbol,
         }
-        res = httpx.get(f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10)
+        res = httpx.get(
+            f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10
+        )
         return res.json().get("output", [])
 
     def _fetch_balance_step(self, fk100: str = "", nk100: str = "") -> dict:
@@ -666,11 +746,13 @@ class MarketHandler(KISAuthHandler):
             "UNPR_DVSN": "01",
             "FUND_STTL_ICLD_YN": "N",
             "FNCG_AMT_AUTO_RDPT_YN": "N",
-            "PRCS_DVSN": "01", # 가공 처리된 잔고
+            "PRCS_DVSN": "01",  # 가공 처리된 잔고
             "CTX_AREA_FK100": fk100,
             "CTX_AREA_NK100": nk100,
         }
-        res = httpx.get(f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10)
+        res = httpx.get(
+            f"{self.base_url}/{endpoint}", headers=headers, params=params, timeout=10
+        )
         data = res.json()
         data["tr_cont"] = res.headers.get("tr_cont", "")
         return data
@@ -745,7 +827,9 @@ class MarketHandler(KISAuthHandler):
             account_product_code=account_product_code,
         )
 
-    def _create_domestic_order(self, symbol: str, quantity: int, price: int, order_type: str, side: str) -> dict:
+    def _create_domestic_order(
+        self, symbol: str, quantity: int, price: int, order_type: str, side: str
+    ) -> dict:
         endpoint = "uapi/domestic-stock/v1/trading/order-cash"
         if side == "buy":
             tr_id = "VTTC0802U" if self.is_simulation else "TTTC0802U"
@@ -807,14 +891,20 @@ class MarketHandler(KISAuthHandler):
 
         env_dv = "demo" if self.is_simulation else "real"
         if env_dv == "demo" and ord_dv != "day":
-            raise ValueError("domestic futureoption demo orders only support ord_dv='day'")
+            raise ValueError(
+                "domestic futureoption demo orders only support ord_dv='day'"
+            )
         if ord_dv not in {"day", "night"}:
             raise ValueError("ord_dv can only be 'day' or 'night'")
 
-        cano, acnt_prdt_cd = self._resolve_domestic_futureoption_account(account_product_code)
+        cano, acnt_prdt_cd = self._resolve_domestic_futureoption_account(
+            account_product_code
+        )
         acnt_prdt_cd = acnt_prdt_cd.strip()
         if not acnt_prdt_cd:
-            raise ValueError("Domestic futureoption orders require an account product code")
+            raise ValueError(
+                "Domestic futureoption orders require an account product code"
+            )
         if acnt_prdt_cd != "03":
             raise ValueError(
                 f"Domestic futureoption orders require ACNT_PRDT_CD=03, got {acnt_prdt_cd!r}"
@@ -910,7 +1000,9 @@ class MarketHandler(KISAuthHandler):
         request_url = f"{self.base_url}/{endpoint}"
 
         for attempt in range(2):
-            token = self.get_valid_token() if attempt == 0 else self.force_refresh_token()
+            token = (
+                self.get_valid_token() if attempt == 0 else self.force_refresh_token()
+            )
             headers = self._build_headers(tr_id, token)
             if use_hashkey and json is not None:
                 headers["hashkey"] = self._issue_hashkey(json)
@@ -941,7 +1033,14 @@ class MarketHandler(KISAuthHandler):
     def get_balance(self):
         return self.fetch_balance()
 
-    def order_domestic_stock(self, code: str, quantity: int, price: int = 0, order_type: str = "01", side: str = "buy"):
+    def order_domestic_stock(
+        self,
+        code: str,
+        quantity: int,
+        price: int = 0,
+        order_type: str = "01",
+        side: str = "buy",
+    ):
         return self._create_domestic_order(code, quantity, price, order_type, side)
 
     def inquire_domestic_stock(self, code: str):
@@ -953,6 +1052,7 @@ class MarketHandler(KISAuthHandler):
 
 if __name__ == "__main__":
     import pprint
+
     handler = MarketHandler()
 
     # 현재가 테스트
@@ -966,7 +1066,7 @@ if __name__ == "__main__":
     pprint.pprint(balance_info)
 
     # 해외주식 테스트
-    print(f"\n=== AAPL (나스닥) 현재가 ===")
+    print("\n=== AAPL (나스닥) 현재가 ===")
     handler_oversea = MarketHandler(exchange="나스닥")
     pprint.pprint(handler_oversea.fetch_price("AAPL"))
 
@@ -974,9 +1074,13 @@ if __name__ == "__main__":
     print("\n=== 삼성전자 최근 10일 일봉 ===")
     ohlcv = handler.fetch_ohlcv("005930", timeframe="D")
     for day in ohlcv[:10]:
-        print(f"날짜: {day.get('stck_bsop_date')}, 종가: {day.get('stck_clpr')}, 변동: {day.get('prdy_vrss')}")
+        print(
+            f"날짜: {day.get('stck_bsop_date')}, 종가: {day.get('stck_clpr')}, 변동: {day.get('prdy_vrss')}"
+        )
 
     print("\n=== TSLA 최근 10일 일봉 ===")
     tsla_ohlcv = handler_oversea.fetch_ohlcv("TSLA", timeframe="D")
     for day in tsla_ohlcv[:10]:
-        print(f"날짜: {day.get('xymd')}, 종가: {day.get('clos')}, 변동: {day.get('diff')}")
+        print(
+            f"날짜: {day.get('xymd')}, 종가: {day.get('clos')}, 변동: {day.get('diff')}"
+        )

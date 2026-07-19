@@ -29,7 +29,9 @@ def run_backtest(
     if ohlcv.is_empty():
         raise ValueError(f"No OHLCV rows for {symbol}.")
 
-    strategy_instance = strategy or MovingAverageCrossStrategy(fast_window=fast_window, slow_window=slow_window)
+    strategy_instance = strategy or MovingAverageCrossStrategy(
+        fast_window=fast_window, slow_window=slow_window
+    )
     signals = _generate_strategy_signals(
         strategy=strategy_instance,
         ohlcv=ohlcv,
@@ -56,7 +58,8 @@ def run_backtest(
         {
             "symbol": symbol,
             "stock_name": stock_name or symbol,
-            "strategy": strategy_name or getattr(strategy_instance, "name", strategy_instance.__class__.__name__),
+            "strategy": strategy_name
+            or getattr(strategy_instance, "name", strategy_instance.__class__.__name__),
         }
     )
 
@@ -65,11 +68,29 @@ def run_backtest(
         stock_name=stock_name or symbol,
         ohlcv=_select_existing_columns(
             signals,
-            ["timestamp", "symbol", "open", "high", "low", "close", "volume", "ma_fast", "ma_slow"],
+            [
+                "timestamp",
+                "symbol",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "ma_fast",
+                "ma_slow",
+            ],
         ),
         signals=_select_existing_columns(
             signals,
-            ["timestamp", "symbol", "signal", "buy_signal", "sell_signal", "ma_fast", "ma_slow"],
+            [
+                "timestamp",
+                "symbol",
+                "signal",
+                "buy_signal",
+                "sell_signal",
+                "ma_fast",
+                "ma_slow",
+            ],
         ),
         trades=trades,
         equity_curve=equity_curve,
@@ -166,10 +187,18 @@ def _simulate_long_only(
         if position == 1:
             stop_loss_hit = False
             take_profit_hit = False
-            
-            stop_loss_price = entry_price * (1.0 - stop_loss_pct) if stop_loss_pct is not None else 0.0
-            take_profit_price = entry_price * (1.0 + take_profit_pct) if take_profit_pct is not None else float("inf")
-            
+
+            stop_loss_price = (
+                entry_price * (1.0 - stop_loss_pct)
+                if stop_loss_pct is not None
+                else 0.0
+            )
+            take_profit_price = (
+                entry_price * (1.0 + take_profit_pct)
+                if take_profit_pct is not None
+                else float("inf")
+            )
+
             if stop_loss_pct is not None and low <= stop_loss_price:
                 stop_loss_hit = True
             if take_profit_pct is not None and high >= take_profit_price:
@@ -190,15 +219,21 @@ def _simulate_long_only(
                 exit_reason = "Take Profit"
             elif bool(row["sell_signal"]):
                 exit_price = close
-                exit_reason = row.get("sell_reason") or row.get("reason") or "sell_signal"
+                exit_reason = (
+                    row.get("sell_reason") or row.get("reason") or "sell_signal"
+                )
 
             if exit_price is not None:
                 gross_value = quantity * exit_price
                 fee_paid = gross_value * transaction_cost
                 cash = gross_value - fee_paid
                 pnl = cash - entry_value
-                trade_return = (exit_price / entry_price - 1) - (2 * transaction_cost) if entry_price else 0.0
-                
+                trade_return = (
+                    (exit_price / entry_price - 1) - (2 * transaction_cost)
+                    if entry_price
+                    else 0.0
+                )
+
                 trades.append(
                     {
                         "timestamp": timestamp,
@@ -236,7 +271,9 @@ def _simulate_long_only(
                     "fee": fee_paid,
                     "pnl": 0.0,
                     "return": 0.0,
-                    "reason": row.get("buy_reason") or row.get("reason") or "buy_signal",
+                    "reason": row.get("buy_reason")
+                    or row.get("reason")
+                    or "buy_signal",
                 }
             )
 
@@ -270,6 +307,7 @@ def _generate_strategy_signals(
 ) -> pl.DataFrame:
     """Generate signals while supporting both parameterized strategy instances and legacy strategies."""
     import inspect
+
     sig = inspect.signature(strategy.generate_signals)
     kwargs = {}
     if "fast_window" in sig.parameters:
@@ -280,15 +318,27 @@ def _generate_strategy_signals(
         kwargs["short_ma_period"] = fast_window
     if "long_ma_period" in sig.parameters:
         kwargs["long_ma_period"] = slow_window
-    
+
     return strategy.generate_signals(ohlcv, **kwargs)
 
 
 def _validate_signal_columns(signals: pl.DataFrame) -> None:
-    required = {"timestamp", "symbol", "open", "high", "low", "close", "volume", "buy_signal", "sell_signal"}
+    required = {
+        "timestamp",
+        "symbol",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "buy_signal",
+        "sell_signal",
+    }
     missing = required - set(signals.columns)
     if missing:
-        raise ValueError(f"Strategy output is missing required columns: {', '.join(sorted(missing))}")
+        raise ValueError(
+            f"Strategy output is missing required columns: {', '.join(sorted(missing))}"
+        )
 
 
 def _select_existing_columns(frame: pl.DataFrame, columns: list[str]) -> pl.DataFrame:
@@ -318,14 +368,18 @@ def _build_metrics(
 
     final_equity = float(equity_curve.get_column("equity")[-1])
     total_return = final_equity / initial_balance - 1
-    
+
     # Calculate years dynamically using timestamps
     start_dt = equity_curve["timestamp"][0]
     end_dt = equity_curve["timestamp"][-1]
-    years = (end_dt - start_dt).total_seconds() / (365.25 * 24 * 3600) if end_dt > start_dt else 0.0
+    years = (
+        (end_dt - start_dt).total_seconds() / (365.25 * 24 * 3600)
+        if end_dt > start_dt
+        else 0.0
+    )
     years = max(years, 1 / 365.25)
     cagr = (1 + total_return) ** (1 / years) - 1 if total_return > -1 else -1.0
-    
+
     # Sharpe Ratio
     returns = equity_curve.get_column("equity").pct_change().fill_null(0.0).to_list()
     std = pstdev(returns) if len(returns) > 1 else 0.0
@@ -334,17 +388,21 @@ def _build_metrics(
         sharpe = math.sqrt(bars_per_year) * fmean(returns) / std
     else:
         sharpe = 0.0
-        
+
     sells = trades.filter(pl.col("side") == "SELL") if not trades.is_empty() else trades
     num_trades = sells.height
     win_rate = float((sells.get_column("pnl") > 0).mean()) if num_trades else 0.0
-    
+
     # Profit Factor
     if num_trades > 0:
         pnl_list = sells["pnl"].to_list()
         gross_profit = sum(p for p in pnl_list if p > 0)
         gross_loss = sum(abs(p) for p in pnl_list if p < 0)
-        profit_factor = gross_profit / gross_loss if gross_loss > 0 else (999.0 if gross_profit > 0 else 0.0)
+        profit_factor = (
+            gross_profit / gross_loss
+            if gross_loss > 0
+            else (999.0 if gross_profit > 0 else 0.0)
+        )
     else:
         profit_factor = 0.0
 
@@ -356,7 +414,7 @@ def _build_metrics(
             buy_t = trade_list[i]["timestamp"]
             sell_t = trade_list[i + 1]["timestamp"]
             holding_seconds.append((sell_t - buy_t).total_seconds())
-            
+
     avg_seconds = fmean(holding_seconds) if holding_seconds else 0.0
     if avg_seconds >= 86400:
         average_holding_time = f"{avg_seconds / 86400:.2f} days"
@@ -374,7 +432,9 @@ def _build_metrics(
     return {
         "total_return": float(total_return),
         "cagr": float(cagr),
-        "mdd": float(equity_curve.get_column("drawdown").min()) if not equity_curve.is_empty() else 0.0,
+        "mdd": float(equity_curve.get_column("drawdown").min())
+        if not equity_curve.is_empty()
+        else 0.0,
         "sharpe": float(sharpe),
         "win_rate": win_rate,
         "num_trades": int(num_trades),

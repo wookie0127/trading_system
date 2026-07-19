@@ -9,7 +9,11 @@ import httpx
 from loguru import logger
 from dotenv import load_dotenv
 
-from follow_telegram_leading.signal_schema import ReadingMessage, ReadingSignal, project_root
+from follow_telegram_leading.signal_schema import (
+    ReadingMessage,
+    ReadingSignal,
+    project_root,
+)
 
 
 load_dotenv(project_root() / ".env")
@@ -25,7 +29,9 @@ CHANNEL_STRATEGY_BY_TITLE = {
 STOP_LOSS_PATTERN = re.compile(r"(-?\d+(?:\.\d+)?)\s*%\s*손절")
 FUTURES_QUANTITY_PATTERN = re.compile(r"(\d+)\s*계약")
 COMPANY_LINE_PATTERN = re.compile(r"^[A-Za-z0-9가-힣&\-\.\(\)]+$")
-COMPANY_LABEL_PATTERN = re.compile(r"(?:종목명|종목)\s*[:：]\s*([A-Za-z0-9가-힣&\-\.\(\)]+)")
+COMPANY_LABEL_PATTERN = re.compile(
+    r"(?:종목명|종목)\s*[:：]\s*([A-Za-z0-9가-힣&\-\.\(\)]+)"
+)
 
 BUY_PHRASES = (
     "들어가셔도",
@@ -80,7 +86,11 @@ def parse_reading_signal(message: ReadingMessage) -> ReadingSignal | None:
     action = _infer_action(text, stop_loss_pct, strategy_name=strategy_name)
     confidence = _infer_confidence(text, company_name, stop_loss_pct, action)
 
-    if not company_name and action == "ignore" and strategy_name != "chart_master_kospi":
+    if (
+        not company_name
+        and action == "ignore"
+        and strategy_name != "chart_master_kospi"
+    ):
         return None
 
     return ReadingSignal(
@@ -95,7 +105,7 @@ def parse_reading_signal(message: ReadingMessage) -> ReadingSignal | None:
         stop_loss_pct=stop_loss_pct,
         entry_hint=_infer_entry_hint(text),
         rationale_text=text,
-        summary=text[:100].replace("\n", " "), # 룰 기반 요약 (첫 100자)
+        summary=text[:100].replace("\n", " "),  # 룰 기반 요약 (첫 100자)
         raw_text=message.raw_text,
         trade_style=_infer_trade_style(text),
         media_path=message.media_path,
@@ -112,7 +122,10 @@ def resolve_channel_strategy_name(message: ReadingMessage) -> str:
         return CHANNEL_STRATEGY_BY_TITLE[title]
 
     if title:
-        return re.sub(r"[^0-9A-Za-z가-힣_]+", "_", title).strip("_").lower() or "telegram_stock_leading"
+        return (
+            re.sub(r"[^0-9A-Za-z가-힣_]+", "_", title).strip("_").lower()
+            or "telegram_stock_leading"
+        )
     return "telegram_stock_leading"
 
 
@@ -148,11 +161,17 @@ def _extract_stop_loss_pct(text: str) -> float | None:
     return value / 100.0
 
 
-def _infer_action(text: str, stop_loss_pct: float | None, strategy_name: str | None = None) -> str:
+def _infer_action(
+    text: str, stop_loss_pct: float | None, strategy_name: str | None = None
+) -> str:
     if strategy_name == "chart_master_kospi":
         if any(phrase in text for phrase in SELL_PHRASES) or "청산" in text:
             return "sell"
-        if any(phrase in text for phrase in BUY_PHRASES) or "진입" in text or "롱" in text:
+        if (
+            any(phrase in text for phrase in BUY_PHRASES)
+            or "진입" in text
+            or "롱" in text
+        ):
             return "buy_candidate"
         if any(phrase in text for phrase in WATCH_PHRASES):
             return "watch"
@@ -210,7 +229,10 @@ LLM_OUTPUT_SCHEMA: dict[str, Any] = {
     "properties": {
         "summary": {"type": "string"},
         "company_name": {"type": ["string", "null"]},
-        "action": {"type": "string", "enum": ["buy_candidate", "sell", "watch", "ignore"]},
+        "action": {
+            "type": "string",
+            "enum": ["buy_candidate", "sell", "watch", "ignore"],
+        },
         "trade_style": {"type": "string", "enum": ["daytrade", "swing", "unknown"]},
         "stop_loss_pct": {"type": ["number", "string", "null"]},
         "entry_hint": {
@@ -234,7 +256,9 @@ LLM_OUTPUT_SCHEMA: dict[str, Any] = {
 }
 
 
-def parse_reading_signal_with_llm(message: ReadingMessage, model: str | None = None) -> ReadingSignal | None:
+def parse_reading_signal_with_llm(
+    message: ReadingMessage, model: str | None = None
+) -> ReadingSignal | None:
     """LLM(Codex/Gemini)을 사용하여 메시지를 파싱합니다."""
     text = (message.text or "").strip()
     if not text:
@@ -261,7 +285,9 @@ def parse_reading_signal_with_llm(message: ReadingMessage, model: str | None = N
         stderr = (e.stderr or "").strip()
         stdout = (e.stdout or "").strip()
         detail = stderr or stdout or str(e)
-        logger.error(f"LLM Parsing failed: {detail}. Falling back to rule-based parser.")
+        logger.error(
+            f"LLM Parsing failed: {detail}. Falling back to rule-based parser."
+        )
         return parse_reading_signal(message)
     except Exception as e:
         logger.error(f"LLM Parsing failed: {e}. Falling back to rule-based parser.")
@@ -311,7 +337,9 @@ def _run_codex_cli(prompt: str, model: str | None = None) -> str:
         temp_path = Path(temp_dir)
         schema_path = temp_path / "reading_signal.schema.json"
         output_path = temp_path / "reading_signal.json"
-        schema_path.write_text(json.dumps(LLM_OUTPUT_SCHEMA, ensure_ascii=False), encoding="utf-8")
+        schema_path.write_text(
+            json.dumps(LLM_OUTPUT_SCHEMA, ensure_ascii=False), encoding="utf-8"
+        )
 
         cmd = [
             cli_command,
@@ -351,7 +379,9 @@ def _run_codex_cli(prompt: str, model: str | None = None) -> str:
 def _run_gemini_api(prompt: str, model: str | None = None) -> str:
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY or GOOGLE_API_KEY is required for TLEADING_LLM_BACKEND=gemini")
+        raise RuntimeError(
+            "GEMINI_API_KEY or GOOGLE_API_KEY is required for TLEADING_LLM_BACKEND=gemini"
+        )
 
     gemini_model = model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     timeout_seconds = int(os.getenv("GEMINI_TIMEOUT_SECONDS", "30"))
@@ -381,7 +411,9 @@ def _run_gemini_api(prompt: str, model: str | None = None) -> str:
             detail = error_payload.get("message") or response.text[:500]
         except Exception:
             detail = response.text[:500]
-        raise RuntimeError(f"Gemini API request failed: HTTP {response.status_code}: {detail}")
+        raise RuntimeError(
+            f"Gemini API request failed: HTTP {response.status_code}: {detail}"
+        )
 
     data = response.json()
     candidates = data.get("candidates") or []
@@ -395,7 +427,9 @@ def _run_gemini_api(prompt: str, model: str | None = None) -> str:
     return text
 
 
-def _build_signal_from_llm_data(message: ReadingMessage, data: dict[str, Any]) -> ReadingSignal:
+def _build_signal_from_llm_data(
+    message: ReadingMessage, data: dict[str, Any]
+) -> ReadingSignal:
     text = (message.text or "").strip()
     strategy_name = resolve_channel_strategy_name(message)
     action = _normalize_action(data.get("action"))
@@ -413,7 +447,10 @@ def _build_signal_from_llm_data(message: ReadingMessage, data: dict[str, Any]) -
         confidence=confidence,
         stop_loss_pct=_coerce_stop_loss_pct(data.get("stop_loss_pct")),
         entry_hint=_normalize_entry_hint(data.get("entry_hint")),
-        rationale_text=_normalize_optional_string(data.get("rationale_text") or data.get("rationale")) or text[:200],
+        rationale_text=_normalize_optional_string(
+            data.get("rationale_text") or data.get("rationale")
+        )
+        or text[:200],
         summary=_normalize_optional_string(data.get("summary")) or text[:100],
         raw_text=message.raw_text,
         trade_style=_normalize_trade_style(data.get("trade_style")),

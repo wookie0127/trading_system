@@ -1,4 +1,6 @@
-import sys as _sys; from pathlib import Path as _Path
+import sys as _sys
+from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).parents[1]))  # src/ 패키지 루트
 del _sys, _Path
 
@@ -33,8 +35,10 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 market_handler = MarketHandler()
 
+
 def log_execution(func):
     """함수 실행 시작과 끝을 로깅하는 데코레이터"""
+
     @wraps(func)
     async def wrapper(ctx, *args, **kwargs):
         func_name = func.__name__
@@ -46,13 +50,18 @@ def log_execution(func):
         except Exception as e:
             logger.error(f"✖ Failed in {func_name}: {e}")
             await ctx.send(f"❌ 오류가 발생했습니다: {e}")
+
     return wrapper
+
 
 @bot.event
 async def on_ready():
     logger.info(f"Bot connected as: {bot.user} (ID: {bot.user_id})")
 
-@bot.command(name="help_trading") # 'help' is built-in, so we use a different name or override
+
+@bot.command(
+    name="help_trading"
+)  # 'help' is built-in, so we use a different name or override
 async def help_trading(ctx):
     msg = "🤖 **Trading Bot Help**\n\n"
     msg += "• `!buy <종목명> <수량>` : 지정한 종목을 시장가로 매수합니다.\n"
@@ -62,6 +71,7 @@ async def help_trading(ctx):
     msg += "• `!backfill <회사명>` : 해당 종목의 과거 1분봉(최근 30일)을 백필합니다."
     await ctx.send(msg)
 
+
 @bot.command(name="buy")
 @log_execution
 async def buy(ctx, stock_name: str, quantity: int):
@@ -70,12 +80,15 @@ async def buy(ctx, stock_name: str, quantity: int):
         await ctx.send(f"❌ '{stock_name}'에 해당하는 종목 코드를 찾을 수 없습니다.")
         return
 
-    res = market_handler.order_domestic_stock(code=code, quantity=quantity, side="buy", order_type="03")
+    res = market_handler.order_domestic_stock(
+        code=code, quantity=quantity, side="buy", order_type="03"
+    )
 
     if res.get("rt_cd") == "0":
         await ctx.send(f"✅ 매수 주문 성공: {stock_name}({code}) {quantity}주")
     else:
         await ctx.send(f"❌ 매수 주문 실패: {res.get('msg1')}")
+
 
 @bot.command(name="sell")
 @log_execution
@@ -85,18 +98,23 @@ async def sell(ctx, stock_name: str, quantity: int):
         await ctx.send(f"❌ '{stock_name}'에 해당하는 종목 코드를 찾을 수 없습니다.")
         return
 
-    res = market_handler.order_domestic_stock(code=code, quantity=quantity, side="sell", order_type="03")
+    res = market_handler.order_domestic_stock(
+        code=code, quantity=quantity, side="sell", order_type="03"
+    )
 
     if res.get("rt_cd") == "0":
         await ctx.send(f"✅ 매도 주문 성공: {stock_name}({code}) {quantity}주")
     else:
         await ctx.send(f"❌ 매도 주문 실패: {res.get('msg1')}")
 
+
 @bot.command(name="balance")
 @log_execution
 async def balance(ctx):
     balance_res = market_handler.get_balance()
-    is_success = balance_res.get("rt_cd") == "0" or (balance_res.get("output2") and len(balance_res.get("output2", [])) > 0)
+    is_success = balance_res.get("rt_cd") == "0" or (
+        balance_res.get("output2") and len(balance_res.get("output2", [])) > 0
+    )
 
     if is_success:
         output = balance_res.get("output1", [])
@@ -119,8 +137,13 @@ async def balance(ctx):
 
         await ctx.send(msg)
     else:
-        error_msg = balance_res.get("msg1") or balance_res.get("error_description") or "알 수 없는 오류"
+        error_msg = (
+            balance_res.get("msg1")
+            or balance_res.get("error_description")
+            or "알 수 없는 오류"
+        )
         await ctx.send(f"❌ 잔고 조회 실패: {error_msg}")
+
 
 @bot.command(name="status")
 @log_execution
@@ -134,7 +157,7 @@ async def status(ctx):
         "KOSPI 200 (성분)": "kospi200_components",
         "투자자 매매동향": "investor_flow_daily",
         "NASDAQ (1분)": "nasdaq_1min",
-        "국내 주식 (일봉)": "kr_stock_daily"
+        "국내 주식 (일봉)": "kr_stock_daily",
     }
 
     for label, key in categories.items():
@@ -157,6 +180,7 @@ async def status(ctx):
 
     await ctx.send(msg)
 
+
 @bot.command(name="backfill")
 @log_execution
 async def backfill(ctx, stock_name: str):
@@ -165,25 +189,33 @@ async def backfill(ctx, stock_name: str):
         await ctx.send(f"❌ '{stock_name}'에 해당하는 종목 코드를 찾을 수 없습니다.")
         return
 
-    await ctx.send(f"♻️ {stock_name}({code})의 과거 30일 1분봉 백필을 시작합니다... (중복 제외)")
+    await ctx.send(
+        f"♻️ {stock_name}({code})의 과거 30일 1분봉 백필을 시작합니다... (중복 제외)"
+    )
 
     from backfill.intraday_backfill_stock import backfill_stock_intraday
+
     results = await backfill_stock_intraday(code, days=30)
 
     msg = f"📊 **{stock_name} 백필 결과**\n"
     msg += f"• 성공: {results['success']}일\n"
     msg += f"• 건너뜀 (이미 존재): {results['skipped']}일\n"
-    if results['failed'] > 0:
+    if results["failed"] > 0:
         msg += f"• 실패: {results['failed']}일\n"
 
-    if results['success'] > 0:
+    if results["success"] > 0:
         msg += f"• 수집된 날짜: {', '.join(results['dates'][-5:])}"
-        if len(results['dates']) > 5: msg += " 등"
+        if len(results["dates"]) > 5:
+            msg += " 등"
 
     await ctx.send(msg)
 
+
 if __name__ == "__main__":
-    token = os.environ.get("DISCORD_TOKEN", "89aa27de4507f60dc5920e0d4f91a83ef46d24881edebdbb721391d7ae87226b")
+    token = os.environ.get(
+        "DISCORD_TOKEN",
+        "89aa27de4507f60dc5920e0d4f91a83ef46d24881edebdbb721391d7ae87226b",
+    )
     if not token:
         logger.error("DISCORD_TOKEN not found in environment variables.")
     else:

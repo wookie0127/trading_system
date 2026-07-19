@@ -7,7 +7,10 @@ Usage:
     tmux new -s backfill
     uv run src/backfill_manager.py
 """
-import sys as _sys; from pathlib import Path as _Path
+
+import sys as _sys
+from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).parents[1]))  # src/ 패키지 루트
 del _sys, _Path
 
@@ -29,7 +32,7 @@ from storage.parquet_writer import daily_path, write_parquet
 
 # --- Configuration ---
 SYMBOLS_LIMIT = 200  # Number of stocks to backfill (e.g. KOSPI 200)
-PAGES_LIMIT = 100    # KIS limit for backward pagination (approx 30*100 = 3000 rows)
+PAGES_LIMIT = 100  # KIS limit for backward pagination (approx 30*100 = 3000 rows)
 DELAY_RANGE = (0.2, 0.5)
 CURRENT_DIR = Path(__file__).parent
 JSON_CODE_PATH = CURRENT_DIR.parent / "data" / "kospi_code_list.json"
@@ -73,15 +76,17 @@ def parse_output(raw_rows: list[dict], symbol: str) -> pd.DataFrame:
         except ValueError:
             continue
 
-        records.append({
-            "timestamp": ts,
-            "symbol": symbol,
-            "open": float(row.get("stck_oprc", 0) or 0),
-            "high": float(row.get("stck_hgpr", 0) or 0),
-            "low": float(row.get("stck_lwpr", 0) or 0),
-            "close": float(row.get("stck_prpr", 0) or 0),
-            "volume": float(row.get("cntg_vol", 0) or 0),
-        })
+        records.append(
+            {
+                "timestamp": ts,
+                "symbol": symbol,
+                "open": float(row.get("stck_oprc", 0) or 0),
+                "high": float(row.get("stck_hgpr", 0) or 0),
+                "low": float(row.get("stck_lwpr", 0) or 0),
+                "close": float(row.get("stck_prpr", 0) or 0),
+                "volume": float(row.get("cntg_vol", 0) or 0),
+            }
+        )
     return pd.DataFrame(records)
 
 
@@ -89,7 +94,7 @@ async def backfill_symbol(handler: MarketHandler, symbol: str) -> None:
     """Paginate backward for a single symbol and save day-wise."""
     logger.info(f"Backfilling {symbol} ...")
 
-    cursor_time = "" # Empty for latest
+    cursor_time = ""  # Empty for latest
     page_count = 0
     all_data = []
 

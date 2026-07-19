@@ -10,7 +10,10 @@ We paginate backwards from market close (153000) to market open (090000).
 
 Storage: market_data/kr/kospi200/1min/<YYYY-MM-DD>.parquet
 """
-import sys as _sys; from pathlib import Path as _Path
+
+import sys as _sys
+from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).parents[2]))  # src/ 패키지 루트
 del _sys, _Path
 
@@ -68,16 +71,18 @@ def _parse_output(raw_rows: list[dict], symbol: str, trade_date: date) -> pd.Dat
         except ValueError:
             continue
 
-        records.append({
-            "timestamp":   ts,
-            "symbol":      symbol,
-            "open":        float(row.get("stck_oprc", 0) or 0),
-            "high":        float(row.get("stck_hgpr", 0) or 0),
-            "low":         float(row.get("stck_lwpr", 0) or 0),
-            "close":       float(row.get("stck_prpr", 0) or 0),
-            "volume":      float(row.get("cntg_vol", 0) or 0),
-            "trade_value": float(row.get("acml_tr_pbmn", 0) or 0),
-        })
+        records.append(
+            {
+                "timestamp": ts,
+                "symbol": symbol,
+                "open": float(row.get("stck_oprc", 0) or 0),
+                "high": float(row.get("stck_hgpr", 0) or 0),
+                "low": float(row.get("stck_lwpr", 0) or 0),
+                "close": float(row.get("stck_prpr", 0) or 0),
+                "volume": float(row.get("cntg_vol", 0) or 0),
+                "trade_value": float(row.get("acml_tr_pbmn", 0) or 0),
+            }
+        )
     return pd.DataFrame(records)
 
 
@@ -94,11 +99,11 @@ async def _fetch_symbol_intraday(
     while True:
         headers = _build_headers(auth)
         params = {
-            "FID_ETC_CLS_CODE":      "",
+            "FID_ETC_CLS_CODE": "",
             "FID_COND_MRKT_DIV_CODE": "J",
-            "FID_INPUT_ISCD":        symbol,
-            "FID_INPUT_HOUR_1":      cursor_time,
-            "FID_PW_DATA_INCU_YN":   "Y",
+            "FID_INPUT_ISCD": symbol,
+            "FID_INPUT_HOUR_1": cursor_time,
+            "FID_PW_DATA_INCU_YN": "Y",
         }
 
         try:

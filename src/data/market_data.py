@@ -63,13 +63,10 @@ def _timestamp_dates(path: Path) -> tuple[date, date] | None:
     if frame.is_empty() or "timestamp" not in frame.columns:
         return None
 
-    dates = (
-        frame.select(
-            pl.col("timestamp").dt.date().min().alias("min_date"),
-            pl.col("timestamp").dt.date().max().alias("max_date"),
-        )
-        .row(0, named=True)
-    )
+    dates = frame.select(
+        pl.col("timestamp").dt.date().min().alias("min_date"),
+        pl.col("timestamp").dt.date().max().alias("max_date"),
+    ).row(0, named=True)
     min_date = dates.get("min_date")
     max_date = dates.get("max_date")
     if min_date is None or max_date is None:
@@ -97,7 +94,9 @@ def list_available_dates(root: Path) -> list[date]:
     return sorted(dates)
 
 
-def _select_files_for_window(root_path: Path, start_date: date, end_date: date) -> list[Path]:
+def _select_files_for_window(
+    root_path: Path, start_date: date, end_date: date
+) -> list[Path]:
     files: list[Path] = []
     for path in sorted(root_path.glob("*.parquet")):
         file_date = _file_date_from_name(path)
@@ -116,7 +115,9 @@ def _select_files_for_window(root_path: Path, start_date: date, end_date: date) 
     return files
 
 
-def _read_ohlcv_files(files: list[Path], start_date: date, end_date: date) -> pl.DataFrame:
+def _read_ohlcv_files(
+    files: list[Path], start_date: date, end_date: date
+) -> pl.DataFrame:
     if not files:
         return pl.DataFrame()
 
@@ -125,12 +126,16 @@ def _read_ohlcv_files(files: list[Path], start_date: date, end_date: date) -> pl
 
     for path in files:
         frame = pl.read_parquet(path)
-        existing_columns = [column for column in required_columns if column in frame.columns]
+        existing_columns = [
+            column for column in required_columns if column in frame.columns
+        ]
         if not {"timestamp", "symbol", "close"}.issubset(existing_columns):
             continue
 
         frame = frame.select(existing_columns)
-        frame = frame.filter(pl.col("timestamp").dt.date().is_between(start_date, end_date))
+        frame = frame.filter(
+            pl.col("timestamp").dt.date().is_between(start_date, end_date)
+        )
         if not frame.is_empty():
             frames.append(frame)
 
@@ -140,11 +145,14 @@ def _read_ohlcv_files(files: list[Path], start_date: date, end_date: date) -> pl
     return pl.concat(frames, how="vertical_relaxed")
 
 
-
 @st.cache_data(show_spinner=False)
-def load_ohlcv(root: str, symbols: tuple[str, ...], start_date: date, end_date: date) -> pl.DataFrame:
+def load_ohlcv(
+    root: str, symbols: tuple[str, ...], start_date: date, end_date: date
+) -> pl.DataFrame:
     root_path = Path(root)
-    frame = _read_ohlcv_files(_select_files_for_window(root_path, start_date, end_date), start_date, end_date)
+    frame = _read_ohlcv_files(
+        _select_files_for_window(root_path, start_date, end_date), start_date, end_date
+    )
 
     if symbols:
         frame = frame.filter(pl.col("symbol").is_in(list(symbols)))
@@ -181,13 +189,17 @@ def load_symbol_name_map() -> dict[str, str]:
             symbol = component.get("symbol")
             name = component.get("name")
             if symbol and name:
-                symbol_names.setdefault(symbol_lookup_key(str(symbol)), str(name).strip())
+                symbol_names.setdefault(
+                    symbol_lookup_key(str(symbol)), str(name).strip()
+                )
 
         for item in payload.get("symbols", []):
             symbol = item.get("code") or item.get("symbol")
             name = item.get("ko_name") or item.get("name") or item.get("en_name")
             if symbol and name:
-                symbol_names.setdefault(symbol_lookup_key(str(symbol)), str(name).strip())
+                symbol_names.setdefault(
+                    symbol_lookup_key(str(symbol)), str(name).strip()
+                )
 
     return symbol_names
 

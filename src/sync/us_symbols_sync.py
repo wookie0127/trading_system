@@ -39,15 +39,18 @@ if current_dir not in sys.path:
     sys.path.append(current_dir)
 
 REFERENCE_DIR = Path(__file__).parents[1] / "data" / "reference"
-SP500_FILE    = REFERENCE_DIR / "sp500_symbols.json"
-NDX100_FILE   = REFERENCE_DIR / "nasdaq100_symbols.json"
+SP500_FILE = REFERENCE_DIR / "sp500_symbols.json"
+NDX100_FILE = REFERENCE_DIR / "nasdaq100_symbols.json"
 
-_NASDAQ100_TOP_N = 100  # FDR NASDAQ 리스팅이 시총 내림차순이므로 상위 N개 = NASDAQ100 근사
+_NASDAQ100_TOP_N = (
+    100  # FDR NASDAQ 리스팅이 시총 내림차순이므로 상위 N개 = NASDAQ100 근사
+)
 
 
 # ---------------------------------------------------------------------------
 # Fetch helpers
 # ---------------------------------------------------------------------------
+
 
 def _fetch_sp500() -> list[dict]:
     import FinanceDataReader as fdr
@@ -60,7 +63,7 @@ def _fetch_sp500() -> list[dict]:
     return [
         {
             "symbol": str(row["Symbol"]).strip(),
-            "name":   str(row["Name"]).strip(),
+            "name": str(row["Name"]).strip(),
             "sector": str(row.get("Sector", "")).strip(),
         }
         for _, row in df.iterrows()
@@ -82,7 +85,7 @@ def _fetch_nasdaq100() -> list[dict]:
     return [
         {
             "symbol": str(row["Symbol"]).strip(),
-            "name":   str(row["Name"]).strip(),
+            "name": str(row["Name"]).strip(),
             "sector": str(row.get("Industry", "")).strip(),
         }
         for _, row in df.iterrows()
@@ -94,7 +97,10 @@ def _fetch_nasdaq100() -> list[dict]:
 # Sync
 # ---------------------------------------------------------------------------
 
-def _write_json(path: Path, index_name: str, components: list[dict], target_date: date) -> None:
+
+def _write_json(
+    path: Path, index_name: str, components: list[dict], target_date: date
+) -> None:
     payload = {
         "updated_at": str(target_date),
         "source": "FinanceDataReader",
@@ -105,7 +111,9 @@ def _write_json(path: Path, index_name: str, components: list[dict], target_date
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
-    logger.success(f"{index_name} symbols JSON 갱신 완료 ({len(components)}종목) → {path}")
+    logger.success(
+        f"{index_name} symbols JSON 갱신 완료 ({len(components)}종목) → {path}"
+    )
 
 
 def sync_sp500_symbols(target_date: date | None = None) -> None:
@@ -139,6 +147,7 @@ def sync_all_us_symbols(target_date: date | None = None) -> None:
 # ---------------------------------------------------------------------------
 # Load helpers (다른 모듈에서 import 용)
 # ---------------------------------------------------------------------------
+
 
 def load_sp500() -> dict:
     if not SP500_FILE.exists():

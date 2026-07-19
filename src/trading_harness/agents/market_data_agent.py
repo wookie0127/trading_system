@@ -19,7 +19,11 @@ class MarketDataAgent:
     def run(self, skip_existing: bool | None = None) -> list[Path]:
         market_config = self.config["market_data"]
         raw_dir = self.config["data"]["raw_dir"]
-        skip = market_config.get("skip_existing", True) if skip_existing is None else skip_existing
+        skip = (
+            market_config.get("skip_existing", True)
+            if skip_existing is None
+            else skip_existing
+        )
         written: list[Path] = []
 
         for symbol, ticker in market_config["tickers"].items():

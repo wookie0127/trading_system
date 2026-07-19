@@ -7,12 +7,13 @@ from backtest.engine import run_backtest
 # Suppress Optuna output logs unless warning
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
+
 def optimize_ma_crossover(
     data_path: str | Path,
     n_trials: int = 50,
     initial_balance: float = 1_000_000.0,
     fee: float = 0.0005,
-    slippage: float = 0.0005
+    slippage: float = 0.0005,
 ) -> dict:
     df = pl.read_parquet(data_path)
     symbol = df["symbol"][0] if df.height > 0 else "BTCUSDT"
@@ -33,7 +34,7 @@ def optimize_ma_crossover(
                 fee=fee,
                 slippage=slippage,
                 stop_loss_pct=stop_loss_pct,
-                take_profit_pct=take_profit_pct
+                take_profit_pct=take_profit_pct,
             )
             metrics = result.metrics
             # Optimize for Sharpe Ratio
@@ -48,12 +49,15 @@ def optimize_ma_crossover(
             return -999.0
 
     study = optuna.create_study(direction="maximize")
-    logger.info(f"Starting Optuna optimization for {symbol} on {Path(data_path).name} with {n_trials} trials...")
+    logger.info(
+        f"Starting Optuna optimization for {symbol} on {Path(data_path).name} with {n_trials} trials..."
+    )
     study.optimize(objective, n_trials=n_trials)
-    
+
     logger.success(f"Optimization completed. Best trial Sharpe: {study.best_value:.4f}")
     logger.info(f"Best parameters: {study.best_params}")
     return study.best_params
+
 
 if __name__ == "__main__":
     optimize_ma_crossover("data/processed/BTCUSDT_1h.parquet", n_trials=50)

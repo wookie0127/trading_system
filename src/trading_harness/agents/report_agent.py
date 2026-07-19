@@ -22,9 +22,14 @@ class ReportAgent:
         self.reporter = MarkdownReporter()
 
     def run(self) -> Path:
-        features = self.repository.read(Path(self.ticker_config["data"]["features_dir"]) / "feature_dataset.parquet")
+        features = self.repository.read(
+            Path(self.ticker_config["data"]["features_dir"]) / "feature_dataset.parquet"
+        )
         signals = self.strategy_agent.load_signals()
         backtests = self.repository.read(self.backtest_config["backtest"]["output"])
         markdown = self.reporter.render(features, signals, backtests)
-        output = project_path(Path(self.ticker_config["data"]["reports_dir"]) / "daily_trading_research_report.md")
+        output = project_path(
+            Path(self.ticker_config["data"]["reports_dir"])
+            / "daily_trading_research_report.md"
+        )
         return self.reporter.write(markdown, output)

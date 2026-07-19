@@ -30,7 +30,9 @@ def resolve_symbols(symbols: str | Iterable[str] = DEFAULT_SYMBOLS) -> list[str]
         if not normalized or normalized.lower() == "kospi200":
             kospi200 = get_symbol_list()
             if not kospi200:
-                raise ValueError("KOSPI200 symbol list is empty. Run kospi200_symbols_sync first.")
+                raise ValueError(
+                    "KOSPI200 symbol list is empty. Run kospi200_symbols_sync first."
+                )
             return kospi200
         return [s.strip() for s in normalized.split(",") if s.strip()]
 
@@ -38,6 +40,7 @@ def resolve_symbols(symbols: str | Iterable[str] = DEFAULT_SYMBOLS) -> list[str]
     if not resolved:
         raise ValueError("No symbols resolved for board collection.")
     return resolved
+
 
 class NaverBoardCollector:
     def __init__(self, db_path: str = "trading_data.db"):
@@ -48,34 +51,36 @@ class NaverBoardCollector:
     async def collect_symbol(self, symbol: str, max_pages: int = 10):
         """특정 종목의 게시물을 증분 수집"""
         logger.info(f"[{symbol}] Collection started (max_pages={max_pages})")
-        
+
         last_nid = await self.db.get_last_board_nid_async(symbol)
         logger.info(f"[{symbol}] Last collected nid in DB: {last_nid}")
-        
+
         all_new_posts = []
         company_name = "Unknown"
-        
+
         for page in range(1, max_pages + 1):
             logger.info(f"[{symbol}] Scraping page {page}...")
-            
+
             # Plan A: HTTPX
             html = await self.scraper.fetch_list_httpx(symbol, page)
             if not html:
-                logger.warning(f"[{symbol}] Plan A failed, trying Plan B (Playwright)...")
+                logger.warning(
+                    f"[{symbol}] Plan A failed, trying Plan B (Playwright)..."
+                )
                 html = await self.scraper.fetch_list_playwright(symbol, page)
-            
+
             if not html:
                 logger.error(f"[{symbol}] Failed to fetch page {page} with both plans.")
                 break
-            
+
             curr_company_name, posts = self.scraper.parse_list(html, symbol)
             if curr_company_name != "Unknown":
                 company_name = curr_company_name
-            
+
             if not posts:
                 logger.warning(f"[{symbol}] No posts found on page {page}.")
                 break
-            
+
             # 증분 수집 로직: DB에 있는 nid를 만나면 중단
             new_posts_in_page = []
             reached_last_nid = False
@@ -84,39 +89,53 @@ class NaverBoardCollector:
                     reached_last_nid = True
                     break
                 new_posts_in_page.append(p)
-            
+
             all_new_posts.extend(new_posts_in_page)
-            logger.info(f"[{symbol}] Page {page}: Found {len(new_posts_in_page)} new posts.")
-            
+            logger.info(
+                f"[{symbol}] Page {page}: Found {len(new_posts_in_page)} new posts."
+            )
+
             if reached_last_nid:
                 logger.info(f"[{symbol}] Reached last collected nid. Stopping.")
                 break
-            
+
             # 과도한 요청 방지
             await asyncio.sleep(0.5)
 
         if all_new_posts:
             # DB 저장용 레코드 변환 (nid, symbol, company_name, date, title, author, views, likes, dislikes, url)
             records = [
-                (p["nid"], p["symbol"], p["company_name"], p["date"], p["title"], 
-                 p["author"], p["views"], p["likes"], p["dislikes"], p["url"])
+                (
+                    p["nid"],
+                    p["symbol"],
+                    p["company_name"],
+                    p["date"],
+                    p["title"],
+                    p["author"],
+                    p["views"],
+                    p["likes"],
+                    p["dislikes"],
+                    p["url"],
+                )
                 for p in all_new_posts
             ]
             await self.db.save_board_posts_async(records)
-            logger.success(f"[{symbol}] Successfully saved {len(all_new_posts)} new posts.")
+            logger.success(
+                f"[{symbol}] Successfully saved {len(all_new_posts)} new posts."
+            )
         else:
             logger.info(f"[{symbol}] No new posts to save.")
-            
+
         # 가장 반응 좋은 게시물(좋아요 기준) 추출
         best_post = None
         if all_new_posts:
             best_post = max(all_new_posts, key=lambda x: x["likes"])
-            
+
         return {
             "symbol": symbol,
             "company_name": company_name,
             "count": len(all_new_posts),
-            "best_post": best_post
+            "best_post": best_post,
         }
 
     async def run(
@@ -143,12 +162,14 @@ class NaverBoardCollector:
             results = await asyncio.gather(*tasks)
         finally:
             await self.db.close()
-        
+
         # 알림 요약 생성
         total_new = sum(r["count"] for r in results)
         if total_new > 0:
             nonzero_results = [r for r in results if r["count"] > 0]
-            ranked_results = sorted(nonzero_results, key=lambda x: x["count"], reverse=True)
+            ranked_results = sorted(
+                nonzero_results, key=lambda x: x["count"], reverse=True
+            )
             display_results = ranked_results[:MAX_REPORT_LINES]
 
             msg = "📊 *네이버 종목 토론방 수집 리포트*\n"
@@ -171,9 +192,15 @@ class NaverBoardCollector:
         else:
             logger.info("No new posts collected. Skipping notification.")
 
-def main(symbols: str = DEFAULT_SYMBOLS, max_pages: int = 5, max_concurrency: int = MAX_CONCURRENCY):
+
+def main(
+    symbols: str = DEFAULT_SYMBOLS,
+    max_pages: int = 5,
+    max_concurrency: int = MAX_CONCURRENCY,
+):
     collector = NaverBoardCollector()
     asyncio.run(collector.run(symbols, max_pages, max_concurrency))
+
 
 if __name__ == "__main__":
     fire.Fire(main)

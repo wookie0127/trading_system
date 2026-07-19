@@ -6,7 +6,12 @@ import csv
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from tenacity import AsyncRetrying, wait_exponential, stop_never, retry_if_exception_type
+from tenacity import (
+    AsyncRetrying,
+    wait_exponential,
+    stop_never,
+    retry_if_exception_type,
+)
 from telethon import events
 
 CURRENT_DIR = Path(__file__).resolve().parent
@@ -21,8 +26,15 @@ from bots.notifier import Notifier
 import discord
 from follow_telegram_leading.client import TelegramReadingClient
 from follow_telegram_leading.compact import TleadingHistoryCompactor
-from follow_telegram_leading.config import CHAT_CONFIG_PATH, load_chat_aliases, resolve_chat_reference
-from follow_telegram_leading.parser import parse_reading_signal, parse_reading_signal_with_llm
+from follow_telegram_leading.config import (
+    CHAT_CONFIG_PATH,
+    load_chat_aliases,
+    resolve_chat_reference,
+)
+from follow_telegram_leading.parser import (
+    parse_reading_signal,
+    parse_reading_signal_with_llm,
+)
 from follow_telegram_leading.store import ReadingStore
 from follow_telegram_leading.trader import TleadingTrader
 
@@ -136,26 +148,44 @@ class TleadingReadingOrchestrator:
         if not output_file:
             dump_dir = self.store.base_dir / "dumps"
             dump_dir.mkdir(parents=True, exist_ok=True)
-            output_file = dump_dir / f"dump_{resolved_chat}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            output_file = (
+                dump_dir
+                / f"dump_{resolved_chat}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            )
 
         output_path = Path(output_file)
 
         with open(output_path, "w", newline="", encoding="utf-8-sig") as f:
             writer = csv.writer(f)
-            writer.writerow(["ID", "Date", "ChatID", "ChatTitle", "Text", "Signal_Action", "Company", "Media_Path"])
+            writer.writerow(
+                [
+                    "ID",
+                    "Date",
+                    "ChatID",
+                    "ChatTitle",
+                    "Text",
+                    "Signal_Action",
+                    "Company",
+                    "Media_Path",
+                ]
+            )
 
             for msg in messages:
-                signal = parse_reading_signal(msg) # 덤프 시에는 빠른 규칙 기반 분석 결과 포함
-                writer.writerow([
-                    msg.message_id,
-                    msg.posted_at.isoformat(),
-                    msg.chat_id,
-                    msg.chat_title,
-                    msg.text,
-                    signal.action if signal else "n/a",
-                    signal.company_name if signal else "n/a",
-                    msg.media_path or ""
-                ])
+                signal = parse_reading_signal(
+                    msg
+                )  # 덤프 시에는 빠른 규칙 기반 분석 결과 포함
+                writer.writerow(
+                    [
+                        msg.message_id,
+                        msg.posted_at.isoformat(),
+                        msg.chat_id,
+                        msg.chat_title,
+                        msg.text,
+                        signal.action if signal else "n/a",
+                        signal.company_name if signal else "n/a",
+                        msg.media_path or "",
+                    ]
+                )
 
         logger.info(
             f"Successfully dumped {len(messages)} messages to {output_path} "
@@ -195,7 +225,9 @@ class TleadingReadingOrchestrator:
             attachment_paths = [message.media_path] if message.media_path else None
 
             for chunk_index, chunk in enumerate(chunks, 1):
-                send_attachments = attachment_paths if chunk_index == len(chunks) else None
+                send_attachments = (
+                    attachment_paths if chunk_index == len(chunks) else None
+                )
                 await self.notifier.send_discord_async(
                     chunk,
                     channel_id=discord_channel_id,
@@ -265,20 +297,30 @@ class TleadingReadingOrchestrator:
 
             # 텔레그램 이벤트 핸들러 정의
             async def _handler(event):
-                logger.info(f"🔥 [EVENT] New Telegram message detected (ID: {event.message.id})")
-                parsed = await self.client._to_reading_message(event.message, download_media, self.store.attachments_dir)
+                logger.info(
+                    f"🔥 [EVENT] New Telegram message detected (ID: {event.message.id})"
+                )
+                parsed = await self.client._to_reading_message(
+                    event.message, download_media, self.store.attachments_dir
+                )
                 if parsed:
-                    logger.info(f"✅ [PARSED] Message {parsed.message_id} converted to ReadingMessage")
+                    logger.info(
+                        f"✅ [PARSED] Message {parsed.message_id} converted to ReadingMessage"
+                    )
                     tg.start_soon(self._process_message, parsed, notify, tg)
                 else:
-                    logger.warning(f"⚠️ [SKIP] Failed to convert message {event.message.id} to ReadingMessage")
+                    logger.warning(
+                        f"⚠️ [SKIP] Failed to convert message {event.message.id} to ReadingMessage"
+                    )
 
             # tenacity를 이용한 리스너 재시도 로직
             async for attempt in AsyncRetrying(
                 wait=wait_exponential(multiplier=1, min=retry_delay_seconds, max=60),
                 stop=stop_never,
                 retry=retry_if_exception_type(Exception),
-                before_sleep=lambda retry_state: self._before_retry_callback(retry_state, notify)
+                before_sleep=lambda retry_state: self._before_retry_callback(
+                    retry_state, notify
+                ),
             ):
                 with attempt:
                     try:
@@ -298,9 +340,13 @@ class TleadingReadingOrchestrator:
                             )
 
                         # 핸들러 등록
-                        self.client.client.add_event_handler(_handler, events.NewMessage(chats=entities))
+                        self.client.client.add_event_handler(
+                            _handler, events.NewMessage(chats=entities)
+                        )
 
-                        logger.info(f"Listening for new Telegram messages from: {resolved_chats}")
+                        logger.info(
+                            f"Listening for new Telegram messages from: {resolved_chats}"
+                        )
                         await self.client.client.run_until_disconnected()
 
                     except KeyboardInterrupt:
@@ -312,13 +358,18 @@ class TleadingReadingOrchestrator:
                         raise
                     except Exception as exc:
                         # 세션/연결 문제일 경우에만 재인증 시도 로직 수행
-                        if any(k in str(exc).lower() for k in ["authorized", "session", "connection"]):
+                        if any(
+                            k in str(exc).lower()
+                            for k in ["authorized", "session", "connection"]
+                        ):
                             await self._handle_session_error(exc, notify)
-                        raise # tenacity가 재시도를 결정하도록 예외를 다시 던짐
+                        raise  # tenacity가 재시도를 결정하도록 예외를 다시 던짐
 
     async def _handle_session_error(self, exc, notify):
         """세션 에러 시 Discord 인증 등을 처리합니다."""
-        disconnect_msg = f"❗ **[Tleading Bot]** 접속 문제 발생: {exc}\n재인증을 시도합니다."
+        disconnect_msg = (
+            f"❗ **[Tleading Bot]** 접속 문제 발생: {exc}\n재인증을 시도합니다."
+        )
         logger.warning(disconnect_msg)
         if notify:
             await self.notifier.notify_all(disconnect_msg)
@@ -335,8 +386,12 @@ class TleadingReadingOrchestrator:
         logger.warning(log_msg)
         # Discord 알림은 너무 빈번할 수 있으므로 로그만 남기거나 선택적으로 전송
 
-    async def _process_message(self, message, notify: bool, tg: anyio.abc.TaskGroup | None = None):
-        logger.info(f"📩 New message received: id={message.message_id} from={message.chat_title}")
+    async def _process_message(
+        self, message, notify: bool, tg: anyio.abc.TaskGroup | None = None
+    ):
+        logger.info(
+            f"📩 New message received: id={message.message_id} from={message.chat_title}"
+        )
         self.store.save_message(message)
 
         # 1. 원문 수신 알림 (디버깅용)
@@ -464,7 +519,9 @@ class TleadingReadingOrchestrator:
                     await message.channel.send(report)
                 except Exception as e:
                     logger.error(f"Error generating status report: {e}")
-                    await message.channel.send(f"❌ 현황 조회 중 오류가 발생했습니다: {e}")
+                    await message.channel.send(
+                        f"❌ 현황 조회 중 오류가 발생했습니다: {e}"
+                    )
 
             elif content in ["!balance", "balance", "잔고"]:
                 logger.info(f"Received balance command from {message.author}")
@@ -473,13 +530,19 @@ class TleadingReadingOrchestrator:
                     await message.channel.send(report)
                 except Exception as e:
                     logger.error(f"Error generating balance report: {e}")
-                    await message.channel.send(f"❌ 잔고 조회 중 오류가 발생했습니다: {e}")
+                    await message.channel.send(
+                        f"❌ 잔고 조회 중 오류가 발생했습니다: {e}"
+                    )
 
             elif content.startswith("!buy "):
-                await self._handle_manual_trade_command(message, raw_content, side="buy")
+                await self._handle_manual_trade_command(
+                    message, raw_content, side="buy"
+                )
 
             elif content.startswith("!sell "):
-                await self._handle_manual_trade_command(message, raw_content, side="sell")
+                await self._handle_manual_trade_command(
+                    message, raw_content, side="sell"
+                )
 
             elif content in ["help", "!help", "도움말", "도움"]:
                 help_text = (
@@ -511,7 +574,9 @@ class TleadingReadingOrchestrator:
             if not client.is_closed():
                 await client.close()
 
-    async def _handle_manual_trade_command(self, message, raw_content: str, side: str) -> None:
+    async def _handle_manual_trade_command(
+        self, message, raw_content: str, side: str
+    ) -> None:
         try:
             command = self._parse_trade_command(raw_content, side=side)
         except ValueError as exc:
@@ -521,7 +586,9 @@ class TleadingReadingOrchestrator:
         market_handler = self.trader.market_handler
         code = market_handler.get_code(command.stock_name)
         if not code:
-            await message.channel.send(f"❌ '{command.stock_name}'에 해당하는 종목 코드를 찾을 수 없습니다.")
+            await message.channel.send(
+                f"❌ '{command.stock_name}'에 해당하는 종목 코드를 찾을 수 없습니다."
+            )
             return
 
         if command.trigger_price is not None:
@@ -593,7 +660,9 @@ class TleadingReadingOrchestrator:
             )
             return True
 
-        if lowered.startswith(("!strategy question ", "!strategy 문의 ", "!strategy 질문 ")):
+        if lowered.startswith(
+            ("!strategy question ", "!strategy 문의 ", "!strategy 질문 ")
+        ):
             question = self._extract_command_payload(normalized, 2)
             if not question:
                 await message.channel.send("전략 문의 내용이 비어 있습니다.")
@@ -605,23 +674,41 @@ class TleadingReadingOrchestrator:
                 "selected": None,
                 "created_at": datetime.now().isoformat(),
             }
-            await self._send_strategy_candidates(message, self.strategy_sessions[channel_id])
+            await self._send_strategy_candidates(
+                message, self.strategy_sessions[channel_id]
+            )
             return True
 
         if lowered.startswith(("!strategy select ", "!select ")):
-            index_raw = self._extract_command_payload(normalized, 1 if lowered.startswith("!select ") else 2)
+            index_raw = self._extract_command_payload(
+                normalized, 1 if lowered.startswith("!select ") else 2
+            )
             return await self._select_strategy_candidate(message, session, index_raw)
 
-        if lowered in {"!strategy candidate", "!strategy candidates", "!candidate", "후보", "전략 후보"}:
+        if lowered in {
+            "!strategy candidate",
+            "!strategy candidates",
+            "!candidate",
+            "후보",
+            "전략 후보",
+        }:
             if not session or not session.get("question"):
-                await message.channel.send("먼저 `!strategy`로 문의를 시작하고 질문을 입력해주세요.")
+                await message.channel.send(
+                    "먼저 `!strategy`로 문의를 시작하고 질문을 입력해주세요."
+                )
                 return True
             session["stage"] = "awaiting_selection"
-            session["candidates"] = await self._build_strategy_candidates(session["question"])
+            session["candidates"] = await self._build_strategy_candidates(
+                session["question"]
+            )
             await self._send_strategy_candidates(message, session)
             return True
 
-        if session and session.get("stage") == "awaiting_question" and not lowered.startswith("!"):
+        if (
+            session
+            and session.get("stage") == "awaiting_question"
+            and not lowered.startswith("!")
+        ):
             question = normalized
             session.update(
                 {
@@ -636,7 +723,11 @@ class TleadingReadingOrchestrator:
             await self._send_strategy_candidates(message, session)
             return True
 
-        if session and session.get("stage") == "awaiting_selection" and normalized.isdigit():
+        if (
+            session
+            and session.get("stage") == "awaiting_selection"
+            and normalized.isdigit()
+        ):
             return await self._select_strategy_candidate(message, session, normalized)
 
         return False
@@ -666,13 +757,17 @@ class TleadingReadingOrchestrator:
         lines.append("선택하려면 `1`, `2`, `3` 또는 `!select 2`처럼 입력하세요.")
         await message.channel.send("\n".join(lines))
 
-    async def _select_strategy_candidate(self, message, session: dict | None, index_raw: str) -> bool:
+    async def _select_strategy_candidate(
+        self, message, session: dict | None, index_raw: str
+    ) -> bool:
         if not session or not session.get("candidates"):
             await message.channel.send("먼저 `!strategy`로 문의를 시작하세요.")
             return True
 
         if not index_raw or not re.fullmatch(r"\d+", index_raw.strip()):
-            await message.channel.send("선택값은 숫자로 입력하세요. 예: `2` 또는 `!select 2`")
+            await message.channel.send(
+                "선택값은 숫자로 입력하세요. 예: `2` 또는 `!select 2`"
+            )
             return True
 
         index = int(index_raw)
@@ -705,10 +800,16 @@ class TleadingReadingOrchestrator:
             try:
                 entry_price = int(trade.get("entry_price") or 0)
                 quantity = int(trade.get("quantity") or 0)
-                current_price = int(self.trader.market_handler.fetch_price(code).get("output", {}).get("stck_prpr", 0))
+                current_price = int(
+                    self.trader.market_handler.fetch_price(code)
+                    .get("output", {})
+                    .get("stck_prpr", 0)
+                )
                 aggregate_pnl += (current_price - entry_price) * quantity
             except Exception as exc:
-                logger.warning(f"Failed to inspect holding {code} for strategy candidates: {exc}")
+                logger.warning(
+                    f"Failed to inspect holding {code} for strategy candidates: {exc}"
+                )
 
         question_hint = question[:80] if question else "현재 상태"
 
@@ -733,10 +834,14 @@ class TleadingReadingOrchestrator:
             primary_reason = f"{question_hint} 기준으로 이익 구간 포지션의 일부 정리를 먼저 검토합니다."
         elif aggregate_pnl < 0:
             primary_title = "리스크 축소 우선"
-            primary_reason = f"{question_hint} 기준으로 손실 포지션의 축소 또는 정리를 먼저 봅니다."
+            primary_reason = (
+                f"{question_hint} 기준으로 손실 포지션의 축소 또는 정리를 먼저 봅니다."
+            )
         else:
             primary_title = "보유 유지"
-            primary_reason = f"{question_hint} 기준으로 현재 보유를 유지하면서 추가 확인을 합니다."
+            primary_reason = (
+                f"{question_hint} 기준으로 현재 보유를 유지하면서 추가 확인을 합니다."
+            )
 
         return [
             {
@@ -759,7 +864,9 @@ class TleadingReadingOrchestrator:
         if len(parts) < 3:
             raise ValueError("❌ 형식이 올바르지 않습니다. 예: `!buy 삼성전자 1`")
 
-        parts, stop_loss_price, stop_loss_pct = TleadingReadingOrchestrator._extract_stop_loss_options(parts)
+        parts, stop_loss_price, stop_loss_pct = (
+            TleadingReadingOrchestrator._extract_stop_loss_options(parts)
+        )
         if len(parts) < 3:
             raise ValueError("❌ 형식이 올바르지 않습니다. 예: `!buy 삼성전자 1 sl=3%`")
         if side != "buy" and (stop_loss_price is not None or stop_loss_pct is not None):
@@ -777,7 +884,9 @@ class TleadingReadingOrchestrator:
 
         if side == "buy":
             if not target_raw.isdigit():
-                raise ValueError("❌ 매수 수량은 양의 정수여야 합니다. 예: `!buy 삼성전자 2`")
+                raise ValueError(
+                    "❌ 매수 수량은 양의 정수여야 합니다. 예: `!buy 삼성전자 2`"
+                )
             quantity = int(target_raw)
             if quantity <= 0:
                 raise ValueError("❌ 매수 수량은 1 이상이어야 합니다.")
@@ -817,7 +926,9 @@ class TleadingReadingOrchestrator:
             try:
                 pct = float(pct_raw)
             except ValueError as exc:
-                raise ValueError("❌ 매도 비율 형식이 올바르지 않습니다. 예: `!sell 삼성전자 30%`") from exc
+                raise ValueError(
+                    "❌ 매도 비율 형식이 올바르지 않습니다. 예: `!sell 삼성전자 30%`"
+                ) from exc
             if pct <= 0 or pct > 100:
                 raise ValueError("❌ 매도 비율은 0 초과 100 이하만 가능합니다.")
             return None, pct / 100
@@ -828,7 +939,9 @@ class TleadingReadingOrchestrator:
                 raise ValueError("❌ 매도 수량은 1 이상이어야 합니다.")
             return quantity, None
 
-        raise ValueError("❌ 매도는 수량 또는 `전량`, `절반`, `30%` 형식으로 입력하세요.")
+        raise ValueError(
+            "❌ 매도는 수량 또는 `전량`, `절반`, `30%` 형식으로 입력하세요."
+        )
 
     @staticmethod
     def _looks_like_price(value: str) -> bool:
@@ -836,7 +949,9 @@ class TleadingReadingOrchestrator:
         return normalized.isdigit()
 
     @staticmethod
-    def _extract_stop_loss_options(parts: list[str]) -> tuple[list[str], int | None, float | None]:
+    def _extract_stop_loss_options(
+        parts: list[str],
+    ) -> tuple[list[str], int | None, float | None]:
         prefixes = {
             "sl",
             "stop",
@@ -861,7 +976,9 @@ class TleadingReadingOrchestrator:
                 remaining.append(token)
                 continue
 
-            parsed_price, parsed_pct = TleadingReadingOrchestrator._parse_stop_loss_value(key, value)
+            parsed_price, parsed_pct = (
+                TleadingReadingOrchestrator._parse_stop_loss_value(key, value)
+            )
             if parsed_price is not None:
                 stop_loss_price = parsed_price
                 stop_loss_pct = None
@@ -883,9 +1000,13 @@ class TleadingReadingOrchestrator:
             try:
                 pct = float(pct_raw)
             except ValueError as exc:
-                raise ValueError("❌ 손절률 형식이 올바르지 않습니다. 예: `sl=3%`") from exc
+                raise ValueError(
+                    "❌ 손절률 형식이 올바르지 않습니다. 예: `sl=3%`"
+                ) from exc
             if pct <= 0 or pct >= 100:
-                raise ValueError("❌ 손절률은 0 초과 100 미만이어야 합니다. 예: `sl=3%`")
+                raise ValueError(
+                    "❌ 손절률은 0 초과 100 미만이어야 합니다. 예: `sl=3%`"
+                )
             return None, pct / 100
 
         if not normalized.isdigit():
@@ -910,7 +1031,9 @@ class TleadingReadingOrchestrator:
     def _parse_trigger_price(value: str) -> int:
         normalized = value.replace(",", "").strip()
         if not normalized.isdigit():
-            raise ValueError("❌ 목표 가격은 숫자여야 합니다. 예: `!buy 삼성전자 1 65000`")
+            raise ValueError(
+                "❌ 목표 가격은 숫자여야 합니다. 예: `!buy 삼성전자 1 65000`"
+            )
         trigger_price = int(normalized)
         if trigger_price <= 0:
             raise ValueError("❌ 목표 가격은 1원 이상이어야 합니다.")
@@ -992,7 +1115,9 @@ def main(
                 if chat is None:
                     raise ValueError("chat is required for relay-history mode")
                 if not discord_channel_id:
-                    raise ValueError("discord_channel_id is required for relay-history mode")
+                    raise ValueError(
+                        "discord_channel_id is required for relay-history mode"
+                    )
                 await orchestrator.relay_history_to_discord(
                     chat=chat,
                     discord_channel_id=discord_channel_id,
@@ -1046,7 +1171,9 @@ def _format_discord_archive_message(message) -> str:
     if message.forward_count is not None:
         lines.append(f"• Forwards: {message.forward_count}")
     if message.reactions:
-        reactions = ", ".join(f"{emoji} {count}" for emoji, count in message.reactions.items())
+        reactions = ", ".join(
+            f"{emoji} {count}" for emoji, count in message.reactions.items()
+        )
         lines.append(f"• Reactions: {reactions}")
 
     text = message.text.strip() if message.text else ""

@@ -15,7 +15,7 @@ class ShadowExecutionAdapter(BaseExecutionAdapter):
         order_type: str,
         requested_price: float,
         requested_quantity: float,
-        client_order_id: Optional[str] = None
+        client_order_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Simulates execution without placing real exchange orders.
@@ -45,5 +45,5 @@ class ShadowExecutionAdapter(BaseExecutionAdapter):
             "filled_quantity": requested_quantity,
             "fee": fee,
             "slippage": slippage,
-            "status": "FILLED"
+            "status": "FILLED",
         }

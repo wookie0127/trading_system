@@ -11,6 +11,6 @@ class BaseExecutionAdapter(ABC):
         order_type: str,  # "MARKET" or "LIMIT"
         requested_price: float,
         requested_quantity: float,
-        client_order_id: Optional[str] = None
+        client_order_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         pass

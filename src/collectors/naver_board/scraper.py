@@ -5,14 +5,15 @@ from urllib.parse import urljoin, urlparse, parse_qs
 from loguru import logger
 from playwright.async_api import async_playwright
 
+
 class NaverBoardScraper:
     BASE_URL = "https://finance.naver.com"
     BOARD_PATH = "/item/board.naver"
-    
+
     def __init__(self, timeout=10):
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer": self.BASE_URL
+            "Referer": self.BASE_URL,
         }
         self.timeout = timeout
 
@@ -20,10 +21,12 @@ class NaverBoardScraper:
         """Plan A: httpx를 사용한 빠른 정적 크롤링 (EUC-KR 처리 포함)"""
         url = f"{self.BASE_URL}{self.BOARD_PATH}?code={symbol}&page={page}"
         try:
-            async with httpx.AsyncClient(headers=self.headers, timeout=self.timeout) as client:
+            async with httpx.AsyncClient(
+                headers=self.headers, timeout=self.timeout
+            ) as client:
                 response = await client.get(url)
                 response.raise_for_status()
-                # Naver Finance는 최신 서비스(Npay 증권 등)에서 UTF-8을 사용하므로 
+                # Naver Finance는 최신 서비스(Npay 증권 등)에서 UTF-8을 사용하므로
                 # httpx의 자동 인코딩 감지 기능을 활용
                 return response.text
         except Exception as e:
@@ -49,7 +52,7 @@ class NaverBoardScraper:
     def parse_list(self, html: str, symbol: str) -> tuple[str, list[dict]]:
         """HTML 파싱하여 종목명과 게시물 목록 추출"""
         soup = BeautifulSoup(html, "html.parser")
-        
+
         # 종목명 추출 (헤더 영역)
         company_name = "Unknown"
         wrap_company = soup.select_one("div.wrap_company h2 a")
@@ -83,16 +86,16 @@ class NaverBoardScraper:
             title_a = tds[1].select_one("a")
             if not title_a:
                 continue
-            
+
             title = title_a.get_text(strip=True)
             href = title_a.get("href", "")
-            
+
             # URL에서 nid 추출
             nid = 0
             query = parse_qs(urlparse(str(href)).query)
             if "nid" in query:
                 nid = int(query["nid"][0])
-            
+
             if not nid:
                 continue
 
@@ -101,26 +104,40 @@ class NaverBoardScraper:
 
             # 조회수 (네 번째 td)
             views_raw = tds[3].get_text(strip=True)
-            views = int(re.sub(r"[^\d]", "", views_raw)) if re.search(r"\d", views_raw) else 0
+            views = (
+                int(re.sub(r"[^\d]", "", views_raw))
+                if re.search(r"\d", views_raw)
+                else 0
+            )
 
             # 공감/비공감 (다섯, 여섯 번째 td)
             likes_raw = tds[4].get_text(strip=True)
-            likes = int(re.sub(r"[^\d]", "", likes_raw)) if re.search(r"\d", likes_raw) else 0
-            
-            dislikes_raw = tds[5].get_text(strip=True)
-            dislikes = int(re.sub(r"[^\d]", "", dislikes_raw)) if re.search(r"\d", dislikes_raw) else 0
+            likes = (
+                int(re.sub(r"[^\d]", "", likes_raw))
+                if re.search(r"\d", likes_raw)
+                else 0
+            )
 
-            posts.append({
-                "nid": nid,
-                "symbol": symbol,
-                "company_name": company_name,
-                "date": date_raw,
-                "title": title,
-                "author": author,
-                "views": views,
-                "likes": likes,
-                "dislikes": dislikes,
-                "url": urljoin(self.BASE_URL, href)
-            })
+            dislikes_raw = tds[5].get_text(strip=True)
+            dislikes = (
+                int(re.sub(r"[^\d]", "", dislikes_raw))
+                if re.search(r"\d", dislikes_raw)
+                else 0
+            )
+
+            posts.append(
+                {
+                    "nid": nid,
+                    "symbol": symbol,
+                    "company_name": company_name,
+                    "date": date_raw,
+                    "title": title,
+                    "author": author,
+                    "views": views,
+                    "likes": likes,
+                    "dislikes": dislikes,
+                    "url": urljoin(self.BASE_URL, href),
+                }
+            )
 
         return company_name, posts

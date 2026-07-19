@@ -8,7 +8,9 @@ def render_trade_table(trades: pl.DataFrame) -> None:
     if trades.is_empty():
         st.info("No trades.")
         return
-    side_filter = st.multiselect("Side", options=["BUY", "SELL"], default=["BUY", "SELL"])
+    side_filter = st.multiselect(
+        "Side", options=["BUY", "SELL"], default=["BUY", "SELL"]
+    )
     filtered = trades.filter(pl.col("side").is_in(side_filter))
     st.dataframe(filtered, width="stretch", hide_index=True)
 

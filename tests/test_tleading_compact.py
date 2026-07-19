@@ -13,7 +13,9 @@ def _append_jsonl(path, payload):
         fp.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
-def test_compact_history_joins_message_signal_decision_with_kospi(tmp_path, monkeypatch):
+def test_compact_history_joins_message_signal_decision_with_kospi(
+    tmp_path, monkeypatch
+):
     base_dir = tmp_path / "follow_telegram_leading"
     compact_date = date(2026, 6, 20)
 
@@ -108,8 +110,20 @@ def test_fetch_kospi_snapshot_falls_back_to_fdr(monkeypatch):
     )
     frame = pd.DataFrame(
         [
-            {"Open": 3000.0, "High": 3010.0, "Low": 2990.0, "Close": 3001.0, "Volume": 100},
-            {"Open": 3001.0, "High": 3020.0, "Low": 3000.0, "Close": 3011.0, "Volume": 200},
+            {
+                "Open": 3000.0,
+                "High": 3010.0,
+                "Low": 2990.0,
+                "Close": 3001.0,
+                "Volume": 100,
+            },
+            {
+                "Open": 3001.0,
+                "High": 3020.0,
+                "Low": 3000.0,
+                "Close": 3011.0,
+                "Volume": 200,
+            },
         ],
         index=pd.to_datetime(["2026-06-18", "2026-06-19"]),
     )

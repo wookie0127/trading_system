@@ -23,10 +23,14 @@ class PositionStateMachine:
         return False
 
     @staticmethod
-    def get_next_state(current_state: PositionState, action: ActionType) -> PositionState:
+    def get_next_state(
+        current_state: PositionState, action: ActionType
+    ) -> PositionState:
         if not PositionStateMachine.is_valid_transition(current_state, action):
-            raise ValueError(f"Invalid transition from {current_state} with action {action}")
-        
+            raise ValueError(
+                f"Invalid transition from {current_state} with action {action}"
+            )
+
         if current_state == "FLAT":
             if action == "OPEN_LONG":
                 return "LONG"

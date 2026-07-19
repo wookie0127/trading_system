@@ -9,7 +9,12 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from loguru import logger
-from tenacity import AsyncRetrying, wait_exponential, stop_after_attempt, retry_if_exception_type
+from tenacity import (
+    AsyncRetrying,
+    wait_exponential,
+    stop_after_attempt,
+    retry_if_exception_type,
+)
 
 from core.kis_market_handler import MarketHandler
 from bots.notifier import Notifier
@@ -24,14 +29,45 @@ class TleadingTrader:
     def __init__(self, notifier: Notifier | None = None, is_mock: bool = False):
         self.market_handler = MarketHandler()
         self.notifier = notifier or Notifier()
-        self.active_trades_path = project_root() / "data" / "follow_telegram_leading" / "active_trades.json"
-        self.trade_history_path = project_root() / "data" / "follow_telegram_leading" / "trade_history.json"
-        self.trade_tracking_path = project_root() / "data" / "follow_telegram_leading" / "trade_price_tracking.json"
-        self.scheduled_orders_path = project_root() / "data" / "follow_telegram_leading" / "scheduled_orders.json"
-        self.autonomous_state_path = project_root() / "data" / "follow_telegram_leading" / "autonomous_strategy_state.json"
-        self.kospi_futures_state_path = project_root() / "data" / "follow_telegram_leading" / "kospi_futures_state.json"
-        self.investment_journal_path = project_root() / "data" / "follow_telegram_leading" / "investment_journal.jsonl"
-        self.daily_reviews_path = project_root() / "data" / "follow_telegram_leading" / "daily_reviews.json"
+        self.active_trades_path = (
+            project_root() / "data" / "follow_telegram_leading" / "active_trades.json"
+        )
+        self.trade_history_path = (
+            project_root() / "data" / "follow_telegram_leading" / "trade_history.json"
+        )
+        self.trade_tracking_path = (
+            project_root()
+            / "data"
+            / "follow_telegram_leading"
+            / "trade_price_tracking.json"
+        )
+        self.scheduled_orders_path = (
+            project_root()
+            / "data"
+            / "follow_telegram_leading"
+            / "scheduled_orders.json"
+        )
+        self.autonomous_state_path = (
+            project_root()
+            / "data"
+            / "follow_telegram_leading"
+            / "autonomous_strategy_state.json"
+        )
+        self.kospi_futures_state_path = (
+            project_root()
+            / "data"
+            / "follow_telegram_leading"
+            / "kospi_futures_state.json"
+        )
+        self.investment_journal_path = (
+            project_root()
+            / "data"
+            / "follow_telegram_leading"
+            / "investment_journal.jsonl"
+        )
+        self.daily_reviews_path = (
+            project_root() / "data" / "follow_telegram_leading" / "daily_reviews.json"
+        )
         self.obsidian_diary_dir = Path(
             os.getenv(
                 "TLEADING_OBSIDIAN_DIARY_DIR",
@@ -40,7 +76,9 @@ class TleadingTrader:
         )
         self.active_trades_path.parent.mkdir(parents=True, exist_ok=True)
         self.is_mock = is_mock
-        self.market_timezone = ZoneInfo(os.getenv("TLEADING_MARKET_TIMEZONE", "Asia/Seoul"))
+        self.market_timezone = ZoneInfo(
+            os.getenv("TLEADING_MARKET_TIMEZONE", "Asia/Seoul")
+        )
         self.market_open_time = time(9, 0)
         self.market_close_time = time(15, 30)
         self.default_stop_loss_pct = self._parse_stop_loss_pct(
@@ -50,32 +88,79 @@ class TleadingTrader:
             os.getenv("TLEADING_DEFAULT_STOP_LOSS_PRICE")
         )
         self.order_quantity = int(os.getenv("TLEADING_ORDER_QUANTITY", "1"))
-        self.holdings_poll_seconds = int(os.getenv("TLEADING_HOLDINGS_POLL_SECONDS", "300"))
-        self.price_tracking_minutes = int(os.getenv("TLEADING_PRICE_TRACKING_MINUTES", "15"))
-        self.scheduled_orders_poll_seconds = int(os.getenv("TLEADING_SCHEDULED_ORDERS_POLL_SECONDS", "5"))
-        self.auto_stop_loss_enabled = os.getenv("TLEADING_AUTO_STOP_LOSS_ENABLED", "true").lower() == "true"
-        self.signal_strategy = os.getenv("TLEADING_SIGNAL_STRATEGY", "confirm").strip().lower()
-        self.llm_auto_buy_min_confidence = float(os.getenv("TLEADING_LLM_AUTO_BUY_MIN_CONFIDENCE", "0.85"))
-        self.llm_auto_sell_min_confidence = float(os.getenv("TLEADING_LLM_AUTO_SELL_MIN_CONFIDENCE", "0.75"))
-        self.llm_daytrade_buy_min_confidence = float(os.getenv("TLEADING_LLM_DAYTRADE_BUY_MIN_CONFIDENCE", str(self.llm_auto_buy_min_confidence)))
-        self.llm_swing_buy_min_confidence = float(os.getenv("TLEADING_LLM_SWING_BUY_MIN_CONFIDENCE", "0.90"))
-        self.daytrade_stop_loss_pct = self._parse_stop_loss_pct(os.getenv("TLEADING_DAYTRADE_STOP_LOSS_PCT", "3%"))
-        self.swing_stop_loss_pct = self._parse_stop_loss_pct(os.getenv("TLEADING_SWING_STOP_LOSS_PCT", "7%"))
+        self.holdings_poll_seconds = int(
+            os.getenv("TLEADING_HOLDINGS_POLL_SECONDS", "300")
+        )
+        self.price_tracking_minutes = int(
+            os.getenv("TLEADING_PRICE_TRACKING_MINUTES", "15")
+        )
+        self.scheduled_orders_poll_seconds = int(
+            os.getenv("TLEADING_SCHEDULED_ORDERS_POLL_SECONDS", "5")
+        )
+        self.auto_stop_loss_enabled = (
+            os.getenv("TLEADING_AUTO_STOP_LOSS_ENABLED", "true").lower() == "true"
+        )
+        self.signal_strategy = (
+            os.getenv("TLEADING_SIGNAL_STRATEGY", "confirm").strip().lower()
+        )
+        self.llm_auto_buy_min_confidence = float(
+            os.getenv("TLEADING_LLM_AUTO_BUY_MIN_CONFIDENCE", "0.85")
+        )
+        self.llm_auto_sell_min_confidence = float(
+            os.getenv("TLEADING_LLM_AUTO_SELL_MIN_CONFIDENCE", "0.75")
+        )
+        self.llm_daytrade_buy_min_confidence = float(
+            os.getenv(
+                "TLEADING_LLM_DAYTRADE_BUY_MIN_CONFIDENCE",
+                str(self.llm_auto_buy_min_confidence),
+            )
+        )
+        self.llm_swing_buy_min_confidence = float(
+            os.getenv("TLEADING_LLM_SWING_BUY_MIN_CONFIDENCE", "0.90")
+        )
+        self.daytrade_stop_loss_pct = self._parse_stop_loss_pct(
+            os.getenv("TLEADING_DAYTRADE_STOP_LOSS_PCT", "3%")
+        )
+        self.swing_stop_loss_pct = self._parse_stop_loss_pct(
+            os.getenv("TLEADING_SWING_STOP_LOSS_PCT", "7%")
+        )
         self.llm_auto_buy_requires_stop_loss = (
-            os.getenv("TLEADING_LLM_AUTO_BUY_REQUIRES_STOP_LOSS", "true").lower() == "true"
+            os.getenv("TLEADING_LLM_AUTO_BUY_REQUIRES_STOP_LOSS", "true").lower()
+            == "true"
         )
-        self.llm_auto_max_buys_per_day = int(os.getenv("TLEADING_LLM_AUTO_MAX_BUYS_PER_DAY", "3"))
-        self.llm_auto_max_active_positions = int(os.getenv("TLEADING_LLM_AUTO_MAX_ACTIVE_POSITIONS", "5"))
-        self.llm_auto_symbol_cooldown_minutes = int(os.getenv("TLEADING_LLM_AUTO_SYMBOL_COOLDOWN_MINUTES", "60"))
-        self.daily_review_poll_seconds = int(os.getenv("TLEADING_DAILY_REVIEW_POLL_SECONDS", "300"))
-        self.daily_review_time = self._parse_hhmm(os.getenv("TLEADING_DAILY_REVIEW_TIME", "23:00"))
-        self.kospi_futures_contract_code = os.getenv("TLEADING_KOSPI_FUTURES_CONTRACT_CODE", "101W09").strip()
-        self.kospi_futures_market_cls_code = os.getenv("TLEADING_KOSPI_FUTURES_MARKET_CLS_CODE", "MKI").strip()
-        self.kospi_futures_daily_budget_krw = int(os.getenv("TLEADING_KOSPI_FUTURES_DAILY_BUDGET_KRW", "1000000"))
+        self.llm_auto_max_buys_per_day = int(
+            os.getenv("TLEADING_LLM_AUTO_MAX_BUYS_PER_DAY", "3")
+        )
+        self.llm_auto_max_active_positions = int(
+            os.getenv("TLEADING_LLM_AUTO_MAX_ACTIVE_POSITIONS", "5")
+        )
+        self.llm_auto_symbol_cooldown_minutes = int(
+            os.getenv("TLEADING_LLM_AUTO_SYMBOL_COOLDOWN_MINUTES", "60")
+        )
+        self.daily_review_poll_seconds = int(
+            os.getenv("TLEADING_DAILY_REVIEW_POLL_SECONDS", "300")
+        )
+        self.daily_review_time = self._parse_hhmm(
+            os.getenv("TLEADING_DAILY_REVIEW_TIME", "23:00")
+        )
+        self.kospi_futures_contract_code = os.getenv(
+            "TLEADING_KOSPI_FUTURES_CONTRACT_CODE", "101W09"
+        ).strip()
+        self.kospi_futures_market_cls_code = os.getenv(
+            "TLEADING_KOSPI_FUTURES_MARKET_CLS_CODE", "MKI"
+        ).strip()
+        self.kospi_futures_daily_budget_krw = int(
+            os.getenv("TLEADING_KOSPI_FUTURES_DAILY_BUDGET_KRW", "1000000")
+        )
         self.kospi_futures_contract_budget_krw = int(
-            os.getenv("TLEADING_KOSPI_FUTURES_CONTRACT_BUDGET_KRW", str(self.kospi_futures_daily_budget_krw))
+            os.getenv(
+                "TLEADING_KOSPI_FUTURES_CONTRACT_BUDGET_KRW",
+                str(self.kospi_futures_daily_budget_krw),
+            )
         )
-        self.kospi_futures_default_quantity = int(os.getenv("TLEADING_KOSPI_FUTURES_DEFAULT_QUANTITY", "1"))
+        self.kospi_futures_default_quantity = int(
+            os.getenv("TLEADING_KOSPI_FUTURES_DEFAULT_QUANTITY", "1")
+        )
         self.kospi_futures_mode = self._resolve_kospi_futures_mode()
         self.kospi_futures_track_only = self.kospi_futures_mode == "tracking"
         self._validate_kospi_futures_mode()
@@ -118,7 +203,9 @@ class TleadingTrader:
     def _resolve_kospi_futures_mode(self) -> str:
         raw_mode = os.getenv("TLEADING_KOSPI_FUTURES_MODE", "").strip().lower()
         if not raw_mode:
-            legacy_track_only = os.getenv("TLEADING_KOSPI_FUTURES_TRACK_ONLY", "false").strip().lower()
+            legacy_track_only = (
+                os.getenv("TLEADING_KOSPI_FUTURES_TRACK_ONLY", "false").strip().lower()
+            )
             return "tracking" if legacy_track_only == "true" else "paper"
 
         aliases = {
@@ -154,7 +241,9 @@ class TleadingTrader:
                 "TLEADING_KOSPI_FUTURES_MODE=live requires KIS_PROFILE=live and KIS_SIMULATION=false"
             )
 
-    async def handle_signal(self, signal: ReadingSignal, tg: anyio.abc.TaskGroup | None = None):
+    async def handle_signal(
+        self, signal: ReadingSignal, tg: anyio.abc.TaskGroup | None = None
+    ):
         """매매 신호를 처리하고 필요 시 Discord 컨펌을 요청합니다."""
         if self._is_weekend():
             logger.info(
@@ -170,7 +259,9 @@ class TleadingTrader:
 
         # 2. 매매 액션 처리
         if signal.action == "ignore":
-            self._record_investment_journal(signal, code=None, decision="ignored", reason="action_ignore")
+            self._record_investment_journal(
+                signal, code=None, decision="ignored", reason="action_ignore"
+            )
             return
 
         if signal.strategy_name == "chart_master_kospi":
@@ -179,21 +270,34 @@ class TleadingTrader:
 
         company = signal.company_name
         if not company:
-            logger.info(f"Signal action is {signal.action} but company name is missing. Skipping trade.")
-            self._record_investment_journal(signal, code=None, decision="skipped", reason="missing_company")
+            logger.info(
+                f"Signal action is {signal.action} but company name is missing. Skipping trade."
+            )
+            self._record_investment_journal(
+                signal, code=None, decision="skipped", reason="missing_company"
+            )
             return
 
         code = self.market_handler.get_code(company)
         if not code:
             logger.warning(f"Could not find code for {company}. Skipping trade.")
-            self._record_investment_journal(signal, code=None, decision="skipped", reason="missing_code")
+            self._record_investment_journal(
+                signal, code=None, decision="skipped", reason="missing_code"
+            )
             return
 
         if signal.action == "buy_candidate":
             active_trades = self._load_trades()
             if code in active_trades:
-                logger.info(f"{company}({code}) is already in active trades. Skipping duplicate buy.")
-                self._record_investment_journal(signal, code=code, decision="skipped", reason="duplicate_active_trade")
+                logger.info(
+                    f"{company}({code}) is already in active trades. Skipping duplicate buy."
+                )
+                self._record_investment_journal(
+                    signal,
+                    code=code,
+                    decision="skipped",
+                    reason="duplicate_active_trade",
+                )
                 return
             if self._should_auto_execute_signal(
                 signal,
@@ -201,17 +305,37 @@ class TleadingTrader:
                 code=code,
                 active_trades=active_trades,
             ):
-                self._record_investment_journal(signal, code=code, decision="auto_buy_attempt", reason="auto_gate_passed")
+                self._record_investment_journal(
+                    signal,
+                    code=code,
+                    decision="auto_buy_attempt",
+                    reason="auto_gate_passed",
+                )
                 await self._auto_buy(company, code, signal)
                 return
-            self._record_investment_journal(signal, code=code, decision="confirm_buy_requested", reason="auto_gate_not_passed")
+            self._record_investment_journal(
+                signal,
+                code=code,
+                decision="confirm_buy_requested",
+                reason="auto_gate_not_passed",
+            )
             await self._confirm_and_buy(company, code, signal)
         elif signal.action == "sell":
             if self._should_auto_execute_signal(signal, expected_action="sell"):
-                self._record_investment_journal(signal, code=code, decision="auto_sell_attempt", reason="auto_gate_passed")
+                self._record_investment_journal(
+                    signal,
+                    code=code,
+                    decision="auto_sell_attempt",
+                    reason="auto_gate_passed",
+                )
                 await self._auto_sell(company, code, signal)
                 return
-            self._record_investment_journal(signal, code=code, decision="confirm_sell_requested", reason="auto_gate_not_passed")
+            self._record_investment_journal(
+                signal,
+                code=code,
+                decision="confirm_sell_requested",
+                reason="auto_gate_not_passed",
+            )
             await self._confirm_and_sell(company, code, signal)
 
     async def _auto_buy(self, company: str, code: str, signal: ReadingSignal):
@@ -238,7 +362,9 @@ class TleadingTrader:
     async def _auto_sell(self, company: str, code: str, signal: ReadingSignal):
         active_trades = self._load_trades()
         if code not in active_trades:
-            logger.info(f"LLM auto sell signal for {company}, but not in active trades.")
+            logger.info(
+                f"LLM auto sell signal for {company}, but not in active trades."
+            )
             return
 
         ok, result_message = await self.place_manual_sell(
@@ -294,7 +420,14 @@ class TleadingTrader:
                     f"✅ [Mock Buy Success] {company} @ {price:,}원 "
                     f"(SL: {self._format_stop_loss_price(sl_price)})"
                 )
-                self.record_executed_buy(company, code, quantity, price, sl_price, trade_style=signal.trade_style)
+                self.record_executed_buy(
+                    company,
+                    code,
+                    quantity,
+                    price,
+                    sl_price,
+                    trade_style=signal.trade_style,
+                )
             else:
                 # 실제 투자
                 res = self.market_handler.create_market_buy_order(code, quantity)
@@ -317,9 +450,18 @@ class TleadingTrader:
                     )
 
                     # 실제 예약 매도 주문 로직 (KIS API에 따라 구현 필요, 여기서는 기록 후 감시)
-                    self.record_executed_buy(company, code, quantity, price, sl_price, trade_style=signal.trade_style)
+                    self.record_executed_buy(
+                        company,
+                        code,
+                        quantity,
+                        price,
+                        sl_price,
+                        trade_style=signal.trade_style,
+                    )
                 else:
-                    fail_msg = f"❌ **[Buy Fail]** {company} 매수 실패: {res.get('msg1')}"
+                    fail_msg = (
+                        f"❌ **[Buy Fail]** {company} 매수 실패: {res.get('msg1')}"
+                    )
                     await self.notifier.notify_all(fail_msg)
         else:
             await self.notifier.notify_all(f"🚫 {company} 매수를 거절하셨습니다.")
@@ -352,7 +494,9 @@ class TleadingTrader:
                 price = int(price_info.get("output", {}).get("stck_prpr", 0))
                 success_msg = f"🍦 **[Mock Sell]** {company} {quantity}주 매도 시뮬레이션 완료 (매도가: {price:,}원)"
                 await self.notifier.notify_all(success_msg)
-                self.record_executed_sell(company, code, quantity, price, active_trade=active_trades[code])
+                self.record_executed_sell(
+                    company, code, quantity, price, active_trade=active_trades[code]
+                )
             else:
                 # 실제 투자
                 res = self.market_handler.create_market_sell_order(code, quantity)
@@ -360,9 +504,13 @@ class TleadingTrader:
                     price = self._extract_price(res, fallback_code=code)
                     success_msg = f"✅ **[Sell Success]** {company} {quantity}주 전량 매도 완료 (매도가: {price:,}원)"
                     await self.notifier.notify_all(success_msg)
-                    self.record_executed_sell(company, code, quantity, price, active_trade=active_trades[code])
+                    self.record_executed_sell(
+                        company, code, quantity, price, active_trade=active_trades[code]
+                    )
                 else:
-                    fail_msg = f"❌ **[Sell Fail]** {company} 매도 실패: {res.get('msg1')}"
+                    fail_msg = (
+                        f"❌ **[Sell Fail]** {company} 매도 실패: {res.get('msg1')}"
+                    )
                     await self.notifier.notify_all(fail_msg)
         else:
             await self.notifier.notify_all(f"🚫 {company} 매도를 거절하셨습니다.")
@@ -370,10 +518,18 @@ class TleadingTrader:
     async def _handle_chart_master_kospi_signal(self, signal: ReadingSignal) -> None:
         action = signal.action
         if action not in {"buy_candidate", "sell"}:
-            self._record_investment_journal(signal, code=self.kospi_futures_contract_code, decision="skipped", reason="non_actionable_futures_signal")
+            self._record_investment_journal(
+                signal,
+                code=self.kospi_futures_contract_code,
+                decision="skipped",
+                reason="non_actionable_futures_signal",
+            )
             return
 
-        requested_qty = self._extract_futures_quantity(signal.rationale_text) or self.kospi_futures_default_quantity
+        requested_qty = (
+            self._extract_futures_quantity(signal.rationale_text)
+            or self.kospi_futures_default_quantity
+        )
         if requested_qty <= 0:
             requested_qty = self.kospi_futures_default_quantity
 
@@ -404,8 +560,16 @@ class TleadingTrader:
                 )
                 return
 
-            budget_remaining = max(self.kospi_futures_daily_budget_krw - (open_quantity * self.kospi_futures_contract_budget_krw), 0)
-            max_allowed_qty = budget_remaining // self.kospi_futures_contract_budget_krw if self.kospi_futures_contract_budget_krw > 0 else 0
+            budget_remaining = max(
+                self.kospi_futures_daily_budget_krw
+                - (open_quantity * self.kospi_futures_contract_budget_krw),
+                0,
+            )
+            max_allowed_qty = (
+                budget_remaining // self.kospi_futures_contract_budget_krw
+                if self.kospi_futures_contract_budget_krw > 0
+                else 0
+            )
             buy_quantity = min(requested_qty, max_allowed_qty)
             if buy_quantity <= 0:
                 await self.notifier.notify_kospi_futures(
@@ -431,7 +595,9 @@ class TleadingTrader:
                 account_product_code="03",
             )
             if res.get("rt_cd") != "0":
-                fail_reason = str(res.get("msg1") or res.get("msg_cd") or "unknown_error")
+                fail_reason = str(
+                    res.get("msg1") or res.get("msg_cd") or "unknown_error"
+                )
                 fail_msg = f"❌ **[KOSPI Futures Buy Fail]** {self.kospi_futures_contract_code} {buy_quantity}계약 진입 실패: {fail_reason}"
                 await self.notifier.notify_kospi_futures(fail_msg)
                 if self._is_futures_insufficient_orderable_amount(res):
@@ -580,8 +746,13 @@ class TleadingTrader:
             avg_entry_price = float(state.get("avg_entry_price") or 0.0)
             total_quantity = open_quantity + buy_quantity
             next_avg_entry = (
-                ((avg_entry_price * open_quantity) + (float(current_price) * buy_quantity)) / total_quantity
-                if total_quantity > 0 else 0.0
+                (
+                    (avg_entry_price * open_quantity)
+                    + (float(current_price) * buy_quantity)
+                )
+                / total_quantity
+                if total_quantity > 0
+                else 0.0
             )
             self._save_kospi_futures_state(
                 {
@@ -592,7 +763,9 @@ class TleadingTrader:
                     "last_updated": self._now_market_tz().isoformat(),
                 }
             )
-            unrealized_pnl_points = (float(current_price) - next_avg_entry) * total_quantity
+            unrealized_pnl_points = (
+                float(current_price) - next_avg_entry
+            ) * total_quantity
             await self.notifier.notify_kospi_futures(
                 "📝 **[KOSPI Futures Paper Buy]** "
                 f"{self.kospi_futures_contract_code} {buy_quantity}계약 가상 진입 "
@@ -622,7 +795,9 @@ class TleadingTrader:
 
         avg_entry_price = float(state.get("avg_entry_price") or 0.0)
         realized_pnl_points = (float(current_price) - avg_entry_price) * sell_quantity
-        cumulative_realized_pnl_points = float(state.get("realized_pnl_points") or 0.0) + realized_pnl_points
+        cumulative_realized_pnl_points = (
+            float(state.get("realized_pnl_points") or 0.0) + realized_pnl_points
+        )
         remaining_quantity = max(open_quantity - sell_quantity, 0)
         next_avg_entry = avg_entry_price if remaining_quantity > 0 else 0.0
         self._save_kospi_futures_state(
@@ -652,21 +827,43 @@ class TleadingTrader:
     def _load_kospi_futures_state(self) -> dict:
         today = self._today_market_date()
         if not self.kospi_futures_state_path.exists():
-            return {"date": today, "open_quantity": 0, "avg_entry_price": 0.0, "realized_pnl_points": 0.0}
+            return {
+                "date": today,
+                "open_quantity": 0,
+                "avg_entry_price": 0.0,
+                "realized_pnl_points": 0.0,
+            }
 
         try:
             with open(self.kospi_futures_state_path, "r", encoding="utf-8") as f:
                 state = json.load(f)
         except Exception:
-            return {"date": today, "open_quantity": 0, "avg_entry_price": 0.0, "realized_pnl_points": 0.0}
+            return {
+                "date": today,
+                "open_quantity": 0,
+                "avg_entry_price": 0.0,
+                "realized_pnl_points": 0.0,
+            }
 
         if not isinstance(state, dict):
-            return {"date": today, "open_quantity": 0, "avg_entry_price": 0.0, "realized_pnl_points": 0.0}
+            return {
+                "date": today,
+                "open_quantity": 0,
+                "avg_entry_price": 0.0,
+                "realized_pnl_points": 0.0,
+            }
         if state.get("date") != today:
-            state = {"date": today, "open_quantity": 0, "avg_entry_price": 0.0, "realized_pnl_points": 0.0}
+            state = {
+                "date": today,
+                "open_quantity": 0,
+                "avg_entry_price": 0.0,
+                "realized_pnl_points": 0.0,
+            }
         state["open_quantity"] = int(state.get("open_quantity", 0) or 0)
         state["avg_entry_price"] = float(state.get("avg_entry_price", 0.0) or 0.0)
-        state["realized_pnl_points"] = float(state.get("realized_pnl_points", 0.0) or 0.0)
+        state["realized_pnl_points"] = float(
+            state.get("realized_pnl_points", 0.0) or 0.0
+        )
         return state
 
     def _save_kospi_futures_state(self, patch: dict) -> None:
@@ -720,7 +917,10 @@ class TleadingTrader:
 
         review_state = reviews.get(review_date, {})
         terminal_feedback_states = {"recorded", "skipped", "prompt_failed"}
-        if review_state.get("feedback_text") or review_state.get("feedback_state") in terminal_feedback_states:
+        if (
+            review_state.get("feedback_text")
+            or review_state.get("feedback_state") in terminal_feedback_states
+        ):
             return
 
         review = review_state.get("review_text")
@@ -735,7 +935,10 @@ class TleadingTrader:
                 }
             )
         else:
-            review_path = Path(review_state.get("markdown_path") or self.obsidian_diary_dir / f"{review_date}.md")
+            review_path = Path(
+                review_state.get("markdown_path")
+                or self.obsidian_diary_dir / f"{review_date}.md"
+            )
             if not review_path.exists():
                 self._write_daily_review_markdown(now.date(), review)
             review_state.setdefault("created_at", now.isoformat())
@@ -750,7 +953,9 @@ class TleadingTrader:
             or os.environ.get("REVIEW_CHANNEL_NAME")
             or "📊-매매-복기"
         )
-        review_channel_id = self.notifier.review_channel_id or self.notifier.diary_channel_id
+        review_channel_id = (
+            self.notifier.review_channel_id or self.notifier.diary_channel_id
+        )
         try:
             feedback = await get_discord_input(
                 review,
@@ -758,7 +963,9 @@ class TleadingTrader:
                 channel_id=review_channel_id,
                 request_label="📘 **[Daily Review]**",
                 prompt_suffix="",
-                response_builder=lambda content: self._build_daily_review_response(content, review_date),
+                response_builder=lambda content: self._build_daily_review_response(
+                    content, review_date
+                ),
                 response_label="📘 **[Daily Review Ack]**",
             )
         except RuntimeError as exc:
@@ -797,7 +1004,17 @@ class TleadingTrader:
             return normalized in {"buy", "b", "y", "yes", "네", "ㅇㅇ", "ok", "매수"}
 
         if expected_action == "sell":
-            return normalized in {"sell", "s", "y", "yes", "네", "ㅇㅇ", "ok", "매도", "정리"}
+            return normalized in {
+                "sell",
+                "s",
+                "y",
+                "yes",
+                "네",
+                "ㅇㅇ",
+                "ok",
+                "매도",
+                "정리",
+            }
 
         return False
 
@@ -823,7 +1040,9 @@ class TleadingTrader:
                 )
                 return False
             if self.llm_auto_buy_requires_stop_loss and signal.stop_loss_pct is None:
-                logger.info("LLM auto buy skipped: stop_loss_pct is required but missing")
+                logger.info(
+                    "LLM auto buy skipped: stop_loss_pct is required but missing"
+                )
                 return False
             if not code:
                 logger.info("LLM auto buy skipped: symbol code is missing")
@@ -848,7 +1067,9 @@ class TleadingTrader:
 
     async def track_holdings_loop(self, tg: anyio.abc.TaskGroup):
         """주기적으로 보유 주식 현황과 손절 트리거를 체크합니다."""
-        logger.info(f"Starting holdings tracking loop (Interval: {self.holdings_poll_seconds} seconds)")
+        logger.info(
+            f"Starting holdings tracking loop (Interval: {self.holdings_poll_seconds} seconds)"
+        )
         while True:
             try:
                 await self.report_holdings(tg)
@@ -892,11 +1113,17 @@ class TleadingTrader:
                 continue
 
             tracked_at = datetime.now()
-            self._record_trade_snapshot(trade, current_price, phase="interval", tracked_at=tracked_at)
+            self._record_trade_snapshot(
+                trade, current_price, phase="interval", tracked_at=tracked_at
+            )
             self._update_trade_tracking_state(code, current_price, tracked_at)
 
             entry_price = trade["entry_price"]
-            profit_rate = ((current_price - entry_price) / entry_price) * 100 if entry_price else 0.0
+            profit_rate = (
+                ((current_price - entry_price) / entry_price) * 100
+                if entry_price
+                else 0.0
+            )
             await self.notifier.notify_diary(
                 f"⏱️ [Auto Trading Log] {trade['company']}({code}) "
                 f"{self.price_tracking_minutes}분 추적\n"
@@ -906,7 +1133,9 @@ class TleadingTrader:
                 f"• 시각: {tracked_at.isoformat(timespec='seconds')}"
             )
 
-    async def _send_post_market_briefings(self, active_trades: dict, now: datetime) -> None:
+    async def _send_post_market_briefings(
+        self, active_trades: dict, now: datetime
+    ) -> None:
         if not self._should_send_post_market_briefing(now):
             return
 
@@ -931,11 +1160,13 @@ class TleadingTrader:
             wait=wait_exponential(multiplier=1, min=2, max=10),
             stop=stop_after_attempt(3),
             retry=retry_if_exception_type(Exception),
-            reraise=True
+            reraise=True,
         ):
             with attempt:
                 active_trades = self._load_trades()
-                active_trades = self._reconcile_active_trades_with_balance(active_trades)
+                active_trades = self._reconcile_active_trades_with_balance(
+                    active_trades
+                )
                 if not active_trades:
                     return
 
@@ -944,7 +1175,9 @@ class TleadingTrader:
 
                 for code, data in active_trades.items():
                     price_info = self.market_handler.fetch_price(code)
-                    current_price = float(price_info.get("output", {}).get("stck_prpr", 0))
+                    current_price = float(
+                        price_info.get("output", {}).get("stck_prpr", 0)
+                    )
                     if current_price == 0:
                         continue
 
@@ -953,17 +1186,26 @@ class TleadingTrader:
                     stop_loss_price = int(data.get("stop_loss_price") or 0)
 
                     status_emoji = "📈" if profit_rate > 0 else "📉"
-                    stop_loss_suffix = f", SL {stop_loss_price:,}원" if stop_loss_price > 0 else ""
+                    stop_loss_suffix = (
+                        f", SL {stop_loss_price:,}원" if stop_loss_price > 0 else ""
+                    )
                     msg += (
                         f"• {data['company']}: {current_price:,}원 "
-                        f"({status_emoji} {profit_rate*100:+.2f}%{stop_loss_suffix})\n"
+                        f"({status_emoji} {profit_rate * 100:+.2f}%{stop_loss_suffix})\n"
                     )
                     has_updates = True
 
                     stop_loss_pending = bool(data.get("stop_loss_pending"))
-                    threshold_price = stop_loss_price or self._resolve_stop_loss(entry_price=entry_price)[0]
+                    threshold_price = (
+                        stop_loss_price
+                        or self._resolve_stop_loss(entry_price=entry_price)[0]
+                    )
 
-                    if self.auto_stop_loss_enabled and threshold_price and current_price <= threshold_price:
+                    if (
+                        self.auto_stop_loss_enabled
+                        and threshold_price
+                        and current_price <= threshold_price
+                    ):
                         if stop_loss_pending:
                             continue
 
@@ -990,7 +1232,11 @@ class TleadingTrader:
         """현재 계좌 상태와 매매 현황을 요약한 리포트를 생성합니다."""
         # 1. 예수금 조회
         balance_info = self.market_handler.fetch_balance()
-        cash = int(balance_info.get("output2", [{}])[0].get("dnca_tot_amt", 0)) if not self.is_mock else 10000000 # 모의는 1천만 시작 가정
+        cash = (
+            int(balance_info.get("output2", [{}])[0].get("dnca_tot_amt", 0))
+            if not self.is_mock
+            else 10000000
+        )  # 모의는 1천만 시작 가정
 
         report = f"💰 **[Account Status]**\n• **예수금**: {cash:,}원\n\n"
         report += self._build_autonomous_strategy_status()
@@ -1005,9 +1251,9 @@ class TleadingTrader:
             for code, data in active_trades.items():
                 price_info = self.market_handler.fetch_price(code)
                 curr_price = int(price_info.get("output", {}).get("stck_prpr", 0))
-                eval_pnl = (curr_price - data['entry_price']) * data['quantity']
-                eval_rate = (curr_price - data['entry_price']) / data['entry_price']
-                total_eval += curr_price * data['quantity']
+                eval_pnl = (curr_price - data["entry_price"]) * data["quantity"]
+                eval_rate = (curr_price - data["entry_price"]) / data["entry_price"]
+                total_eval += curr_price * data["quantity"]
                 stop_loss_price = int(data.get("stop_loss_price") or 0)
 
                 rows.append(
@@ -1016,13 +1262,21 @@ class TleadingTrader:
                         str(data["quantity"]),
                         f"{data['entry_price']:,}",
                         f"{curr_price:,}",
-                        f"{eval_rate*100:+.2f}%",
+                        f"{eval_rate * 100:+.2f}%",
                         f"{eval_pnl:+,}",
                         f"{stop_loss_price:,}" if stop_loss_price > 0 else "-",
                     ]
                 )
             report += self._format_text_table(
-                headers=["종목", "보유수량", "평단가", "현재가", "수익률", "평가손익", "손절가"],
+                headers=[
+                    "종목",
+                    "보유수량",
+                    "평단가",
+                    "현재가",
+                    "수익률",
+                    "평가손익",
+                    "손절가",
+                ],
                 rows=rows,
             )
             report += f"\n• 보유종목 총 평가액: {total_eval:,}원\n\n"
@@ -1061,9 +1315,9 @@ class TleadingTrader:
             total_pnl = 0
             # 최근 10개까지만 표시
             for item in history[-10:]:
-                total_pnl += item['pnl']
-                emoji = "🔥" if item['pnl'] >= 0 else "🧊"
-                report += f"• {item['company']}: {item['pnl_rate']*100:+.2f}% ({item['pnl']:+,}원)\n"
+                total_pnl += item["pnl"]
+                emoji = "🔥" if item["pnl"] >= 0 else "🧊"
+                report += f"• {item['company']}: {item['pnl_rate'] * 100:+.2f}% ({item['pnl']:+,}원)\n"
             report += f"**▶️ 누적 실현 손익**: {total_pnl:+,}원"
         else:
             report += "🏁 **최근 실현 손익**: 이력 없음"
@@ -1108,7 +1362,10 @@ class TleadingTrader:
             res = self.market_handler.create_market_buy_order(code, quantity)
             if res.get("rt_cd") != "0":
                 error_msg = res.get("msg1") or res.get("msg_cd") or "알 수 없는 오류"
-                return False, f"❌ {verb} 주문 실패: {company}({code}) {quantity}주, {error_msg}"
+                return (
+                    False,
+                    f"❌ {verb} 주문 실패: {company}({code}) {quantity}주, {error_msg}",
+                )
 
             price = self._extract_price(res, fallback_code=code)
             resolved_stop_loss_price, stop_loss_label = self._resolve_stop_loss(
@@ -1145,7 +1402,9 @@ class TleadingTrader:
             return False, f"❌ {company}({code}) 보유 내역이 없습니다."
 
         try:
-            sell_quantity = self._resolve_sell_quantity(trade["quantity"], quantity=quantity, ratio=ratio)
+            sell_quantity = self._resolve_sell_quantity(
+                trade["quantity"], quantity=quantity, ratio=ratio
+            )
             verb_detail = f"{sell_quantity}주"
             if ratio is not None:
                 verb_detail = f"{int(ratio * 100)}% ({sell_quantity}주)"
@@ -1155,17 +1414,30 @@ class TleadingTrader:
                 price = int(price_info.get("output", {}).get("stck_prpr", 0))
                 if price <= 0:
                     return False, "❌ 매도 주문 실패: 현재가를 조회하지 못했습니다."
-                self.record_executed_sell(company, code, sell_quantity, price, active_trade=trade)
-                return True, f"✅ 매도 주문 성공: {company}({code}) {verb_detail}, 체결가 {price:,}원"
+                self.record_executed_sell(
+                    company, code, sell_quantity, price, active_trade=trade
+                )
+                return (
+                    True,
+                    f"✅ 매도 주문 성공: {company}({code}) {verb_detail}, 체결가 {price:,}원",
+                )
 
             res = self.market_handler.create_market_sell_order(code, sell_quantity)
             if res.get("rt_cd") != "0":
                 error_msg = res.get("msg1") or res.get("msg_cd") or "알 수 없는 오류"
-                return False, f"❌ 매도 주문 실패: {company}({code}) {verb_detail}, {error_msg}"
+                return (
+                    False,
+                    f"❌ 매도 주문 실패: {company}({code}) {verb_detail}, {error_msg}",
+                )
 
             price = self._extract_price(res, fallback_code=code)
-            self.record_executed_sell(company, code, sell_quantity, price, active_trade=trade)
-            return True, f"✅ 매도 주문 성공: {company}({code}) {verb_detail}, 체결가 {price:,}원"
+            self.record_executed_sell(
+                company, code, sell_quantity, price, active_trade=trade
+            )
+            return (
+                True,
+                f"✅ 매도 주문 성공: {company}({code}) {verb_detail}, 체결가 {price:,}원",
+            )
         except Exception as exc:
             logger.error(f"Manual sell command failed: {exc}")
             return False, f"❌ 매도 주문 중 오류가 발생했습니다: {exc}"
@@ -1235,7 +1507,9 @@ class TleadingTrader:
             entry_price = trade["entry_price"]
             pnl = (price - entry_price) * quantity
             pnl_rate = (price - entry_price) / entry_price
-            self._save_history(company, code, quantity, entry_price, price, pnl, pnl_rate, trade=trade)
+            self._save_history(
+                company, code, quantity, entry_price, price, pnl, pnl_rate, trade=trade
+            )
         self._save_trade(company, code, quantity, price, "sell")
 
     async def process_scheduled_orders(self) -> None:
@@ -1258,7 +1532,9 @@ class TleadingTrader:
                 continue
 
             trigger_price = int(order["trigger_price"])
-            if not self._should_execute_scheduled_order(order["side"], current_price, trigger_price):
+            if not self._should_execute_scheduled_order(
+                order["side"], current_price, trigger_price
+            ):
                 remaining_orders.append(order)
                 continue
 
@@ -1278,9 +1554,7 @@ class TleadingTrader:
                     ratio=order.get("ratio"),
                 )
 
-            prefix = (
-                f"🗓️ **[예약 주문 실행]** 현재가 {current_price:,}원 / 목표가 {trigger_price:,}원\n"
-            )
+            prefix = f"🗓️ **[예약 주문 실행]** 현재가 {current_price:,}원 / 목표가 {trigger_price:,}원\n"
             await self.notifier.notify_all(prefix + result_message)
             if not ok and not self._is_non_retryable_order_failure(result_message):
                 remaining_orders.append(order)
@@ -1314,19 +1588,21 @@ class TleadingTrader:
         trade: dict | None = None,
     ):
         history = self._load_history()
-        history.append({
-            "company": company,
-            "code": code,
-            "quantity": quantity,
-            "buy_price": buy_price,
-            "sell_price": sell_price,
-            "pnl": pnl,
-            "pnl_rate": pnl_rate,
-            "trade_id": trade.get("trade_id") if trade else None,
-            "trade_style": trade.get("trade_style") if trade else "unknown",
-            "entry_at": trade.get("entry_at") if trade else None,
-            "closed_at": datetime.now().isoformat()
-        })
+        history.append(
+            {
+                "company": company,
+                "code": code,
+                "quantity": quantity,
+                "buy_price": buy_price,
+                "sell_price": sell_price,
+                "pnl": pnl,
+                "pnl_rate": pnl_rate,
+                "trade_id": trade.get("trade_id") if trade else None,
+                "trade_style": trade.get("trade_style") if trade else "unknown",
+                "entry_at": trade.get("entry_at") if trade else None,
+                "closed_at": datetime.now().isoformat(),
+            }
+        )
         with open(self.trade_history_path, "w", encoding="utf-8") as f:
             json.dump(history, f, ensure_ascii=False, indent=2)
 
@@ -1356,29 +1632,41 @@ class TleadingTrader:
                     f"(매도가: {price:,}원)"
                 )
                 await self.notifier.notify_all(success_msg)
-                await self.notifier.notify_diary(f"✅ [Mock Stop Loss] {company} @ {price:,}원")
+                await self.notifier.notify_diary(
+                    f"✅ [Mock Stop Loss] {company} @ {price:,}원"
+                )
                 active_trade = self._load_trades().get(code)
-                self.record_executed_sell(company, code, quantity, price, active_trade=active_trade)
+                self.record_executed_sell(
+                    company, code, quantity, price, active_trade=active_trade
+                )
                 return
 
             res = self.market_handler.create_market_sell_order(code, quantity)
             if res.get("rt_cd") == "0":
-                price = self._extract_price(res, fallback_code=code) or int(current_price)
+                price = self._extract_price(res, fallback_code=code) or int(
+                    current_price
+                )
                 success_msg = (
                     f"🛑 **[Stop Loss Sell Success]** {company} {quantity}주 자동 손절 완료 "
                     f"(매도가: {price:,}원)"
                 )
                 await self.notifier.notify_all(success_msg)
-                await self.notifier.notify_diary(f"🛑 [Stop Loss Sold] {company} @ {price:,}원")
+                await self.notifier.notify_diary(
+                    f"🛑 [Stop Loss Sold] {company} @ {price:,}원"
+                )
                 active_trade = self._load_trades().get(code)
-                self.record_executed_sell(company, code, quantity, price, active_trade=active_trade)
+                self.record_executed_sell(
+                    company, code, quantity, price, active_trade=active_trade
+                )
             else:
                 self._mark_trade_stop_loss_pending(code, False)
                 fail_msg = f"❌ **[Stop Loss Sell Fail]** {company} 자동 손절 실패: {res.get('msg1')}"
                 await self.notifier.notify_all(fail_msg)
         except Exception as exc:
             self._mark_trade_stop_loss_pending(code, False)
-            await self.notifier.notify_all(f"❌ **[Stop Loss Exception]** {company}: {exc}")
+            await self.notifier.notify_all(
+                f"❌ **[Stop Loss Exception]** {company}: {exc}"
+            )
 
     def _save_trade(
         self,
@@ -1398,7 +1686,11 @@ class TleadingTrader:
                 existing_quantity = int(existing_trade["quantity"])
                 new_quantity = existing_quantity + quantity
                 weighted_avg = round(
-                    ((existing_trade["entry_price"] * existing_quantity) + (price * quantity)) / new_quantity
+                    (
+                        (existing_trade["entry_price"] * existing_quantity)
+                        + (price * quantity)
+                    )
+                    / new_quantity
                 )
                 existing_trade["company"] = company
                 existing_trade["quantity"] = new_quantity
@@ -1520,9 +1812,7 @@ class TleadingTrader:
                 continue
 
             quantity = self._to_int(
-                item.get("hldg_qty")
-                or item.get("hold_qty")
-                or item.get("cblc_qty13")
+                item.get("hldg_qty") or item.get("hold_qty") or item.get("cblc_qty13")
             )
             avg_price = self._to_int(
                 item.get("pchs_avg_pric")
@@ -1621,9 +1911,16 @@ class TleadingTrader:
             return self.llm_swing_buy_min_confidence
         return self.llm_auto_buy_min_confidence
 
-    def _autonomous_buy_risk_allows(self, code: str, active_trades: dict | None = None) -> bool:
-        active_trades = active_trades if active_trades is not None else self._load_trades()
-        if self.llm_auto_max_active_positions > 0 and len(active_trades) >= self.llm_auto_max_active_positions:
+    def _autonomous_buy_risk_allows(
+        self, code: str, active_trades: dict | None = None
+    ) -> bool:
+        active_trades = (
+            active_trades if active_trades is not None else self._load_trades()
+        )
+        if (
+            self.llm_auto_max_active_positions > 0
+            and len(active_trades) >= self.llm_auto_max_active_positions
+        ):
             logger.info(
                 "LLM auto buy skipped: active positions {} reached limit {}",
                 len(active_trades),
@@ -1632,7 +1929,10 @@ class TleadingTrader:
             return False
 
         state = self._load_autonomous_state()
-        if self.llm_auto_max_buys_per_day > 0 and int(state.get("buy_count", 0)) >= self.llm_auto_max_buys_per_day:
+        if (
+            self.llm_auto_max_buys_per_day > 0
+            and int(state.get("buy_count", 0)) >= self.llm_auto_max_buys_per_day
+        ):
             logger.info(
                 "LLM auto buy skipped: daily buy count {} reached limit {}",
                 state.get("buy_count", 0),
@@ -1688,7 +1988,9 @@ class TleadingTrader:
         with open(self.autonomous_state_path, "w", encoding="utf-8") as f:
             json.dump(state, f, ensure_ascii=False, indent=2)
 
-    def _last_autonomous_action_at(self, state: dict, side: str, code: str) -> datetime | None:
+    def _last_autonomous_action_at(
+        self, state: dict, side: str, code: str
+    ) -> datetime | None:
         action = state.get("last_actions", {}).get(f"{side}:{code}")
         if not isinstance(action, dict):
             return None
@@ -1737,7 +2039,9 @@ class TleadingTrader:
                 market_cls_code=self.kospi_futures_market_cls_code,
             )
             unrealized_pnl_points = (
-                (float(current_price) - avg_entry_price) * open_quantity if open_quantity > 0 else 0.0
+                (float(current_price) - avg_entry_price) * open_quantity
+                if open_quantity > 0
+                else 0.0
             )
             return (
                 "📈 **KOSPI 선물 가상 추적**\n"
@@ -1754,11 +2058,13 @@ class TleadingTrader:
     def _build_daily_review(self, review_date: date) -> str:
         date_key = review_date.isoformat()
         journal_records = [
-            record for record in self._load_investment_journal()
+            record
+            for record in self._load_investment_journal()
             if self._iso_date(record.get("recorded_at")) == date_key
         ]
         closed_trades = [
-            trade for trade in self._load_history()
+            trade
+            for trade in self._load_history()
             if self._iso_date(trade.get("closed_at")) == date_key
         ]
         active_trades = self._load_trades()
@@ -1780,19 +2086,30 @@ class TleadingTrader:
 
         for style in ["daytrade", "swing", "manual", "unknown"]:
             style_journal = [
-                record for record in journal_records
+                record
+                for record in journal_records
                 if self._normalize_trade_style_value(record.get("trade_style")) == style
             ]
             style_trades = [
-                trade for trade in closed_trades
+                trade
+                for trade in closed_trades
                 if self._normalize_trade_style_value(trade.get("trade_style")) == style
             ]
             style_active = [
-                trade for trade in active_trades.values()
+                trade
+                for trade in active_trades.values()
                 if self._normalize_trade_style_value(trade.get("trade_style")) == style
             ]
-            auto_attempts = sum(1 for record in style_journal if str(record.get("decision", "")).startswith("auto_"))
-            confirm_requests = sum(1 for record in style_journal if str(record.get("decision", "")).startswith("confirm_"))
+            auto_attempts = sum(
+                1
+                for record in style_journal
+                if str(record.get("decision", "")).startswith("auto_")
+            )
+            confirm_requests = sum(
+                1
+                for record in style_journal
+                if str(record.get("decision", "")).startswith("confirm_")
+            )
             realized_pnl = sum(int(trade.get("pnl", 0)) for trade in style_trades)
             wins = sum(1 for trade in style_trades if int(trade.get("pnl", 0)) > 0)
             win_rate = (wins / len(style_trades) * 100) if style_trades else 0.0
@@ -1812,7 +2129,9 @@ class TleadingTrader:
                 "",
                 "## 복기 포인트",
                 "",
-                self._build_daily_review_notes(journal_records, closed_trades, active_trades),
+                self._build_daily_review_notes(
+                    journal_records, closed_trades, active_trades
+                ),
                 "",
                 "## 판단 로그",
                 "",
@@ -1835,8 +2154,14 @@ class TleadingTrader:
         closed_trades: list[dict],
         active_trades: dict,
     ) -> str:
-        auto_records = [record for record in journal_records if str(record.get("decision", "")).startswith("auto_")]
-        skipped_records = [record for record in journal_records if record.get("decision") == "skipped"]
+        auto_records = [
+            record
+            for record in journal_records
+            if str(record.get("decision", "")).startswith("auto_")
+        ]
+        skipped_records = [
+            record for record in journal_records if record.get("decision") == "skipped"
+        ]
         total_pnl = sum(int(trade.get("pnl", 0)) for trade in closed_trades)
 
         return (
@@ -1918,7 +2243,9 @@ class TleadingTrader:
             f.write(review.rstrip() + "\n")
         return path
 
-    def _append_daily_review_feedback_markdown(self, review_date: date, feedback: str) -> None:
+    def _append_daily_review_feedback_markdown(
+        self, review_date: date, feedback: str
+    ) -> None:
         self.obsidian_diary_dir.mkdir(parents=True, exist_ok=True)
         path = self.obsidian_diary_dir / f"{review_date.isoformat()}.md"
         with open(path, "a", encoding="utf-8") as f:
@@ -1982,7 +2309,9 @@ class TleadingTrader:
             return text[:77] + "..."
         return text or "-"
 
-    def _mark_trade_stop_loss_pending(self, code: str, pending: bool, trigger_price: float | None = None):
+    def _mark_trade_stop_loss_pending(
+        self, code: str, pending: bool, trigger_price: float | None = None
+    ):
         trades = self._load_trades()
         if code not in trades:
             return
@@ -2007,7 +2336,9 @@ class TleadingTrader:
         entry_price = int(trade["entry_price"])
         quantity = int(trade["quantity"])
         profit_amount = (current_price - entry_price) * quantity
-        profit_rate = (current_price - entry_price) / entry_price if entry_price else 0.0
+        profit_rate = (
+            (current_price - entry_price) / entry_price if entry_price else 0.0
+        )
 
         history.append(
             {
@@ -2016,7 +2347,9 @@ class TleadingTrader:
                 "code": trade.get("code") or trade.get("pdno"),
                 "quantity": quantity,
                 "entry_price": entry_price,
-                "trade_style": self._normalize_trade_style_value(trade.get("trade_style")),
+                "trade_style": self._normalize_trade_style_value(
+                    trade.get("trade_style")
+                ),
                 "current_price": current_price,
                 "profit_amount": profit_amount,
                 "profit_rate": profit_rate,
@@ -2048,7 +2381,9 @@ class TleadingTrader:
         except ValueError:
             return True
 
-        next_tracking_at = last_tracked_at + timedelta(minutes=self.price_tracking_minutes)
+        next_tracking_at = last_tracked_at + timedelta(
+            minutes=self.price_tracking_minutes
+        )
         return datetime.now() >= next_tracking_at
 
     def _now_market_tz(self) -> datetime:
@@ -2069,7 +2404,9 @@ class TleadingTrader:
         now = now or self._now_market_tz()
         return now.weekday() >= 5
 
-    def _build_post_market_briefing(self, code: str, trade: dict, trade_date: date) -> str | None:
+    def _build_post_market_briefing(
+        self, code: str, trade: dict, trade_date: date
+    ) -> str | None:
         price_info = self.market_handler.fetch_price(code)
         output = price_info.get("output", {})
         current_price = self._to_int(output.get("stck_prpr"))
@@ -2079,7 +2416,9 @@ class TleadingTrader:
         entry_price = int(trade["entry_price"])
         quantity = int(trade["quantity"])
         profit_amount = (current_price - entry_price) * quantity
-        profit_rate = ((current_price - entry_price) / entry_price) * 100 if entry_price else 0.0
+        profit_rate = (
+            ((current_price - entry_price) / entry_price) * 100 if entry_price else 0.0
+        )
 
         investor_flow = self._extract_investor_flow_snapshot(code)
         volume = self._to_int(investor_flow.get("volume"))
@@ -2151,7 +2490,9 @@ class TleadingTrader:
             return "manual"
         return "unknown"
 
-    def _update_trade_tracking_state(self, code: str, current_price: int, tracked_at: datetime):
+    def _update_trade_tracking_state(
+        self, code: str, current_price: int, tracked_at: datetime
+    ):
         trades = self._load_trades()
         trade = trades.get(code)
         if not trade:
@@ -2198,10 +2539,15 @@ class TleadingTrader:
         if stop_loss_pct is not None:
             if stop_loss_pct <= 0 or stop_loss_pct >= 1:
                 raise ValueError("손절률은 0% 초과 100% 미만이어야 합니다.")
-            return int(entry_price * (1 - stop_loss_pct)), f"매매가 기준 {stop_loss_pct * 100:.1f}%"
+            return int(
+                entry_price * (1 - stop_loss_pct)
+            ), f"매매가 기준 {stop_loss_pct * 100:.1f}%"
 
         if self.default_stop_loss_price is not None:
-            return self.default_stop_loss_price, f"기본 지정가 {self.default_stop_loss_price:,}원"
+            return (
+                self.default_stop_loss_price,
+                f"기본 지정가 {self.default_stop_loss_price:,}원",
+            )
 
         if self.default_stop_loss_pct is not None:
             return (
@@ -2229,7 +2575,9 @@ class TleadingTrader:
             value = value / 100
 
         if value <= 0 or value >= 1:
-            raise ValueError("TLEADING_DEFAULT_STOP_LOSS_PCT must be between 0 and 100%.")
+            raise ValueError(
+                "TLEADING_DEFAULT_STOP_LOSS_PCT must be between 0 and 100%."
+            )
         return value
 
     @staticmethod
@@ -2265,7 +2613,9 @@ class TleadingTrader:
         return f"{code}:{side}:{trigger_price}:{datetime.now().isoformat()}"
 
     @staticmethod
-    def _should_execute_scheduled_order(side: str, current_price: int, trigger_price: int) -> bool:
+    def _should_execute_scheduled_order(
+        side: str, current_price: int, trigger_price: int
+    ) -> bool:
         if side == "buy":
             return current_price <= trigger_price
         if side == "sell":
@@ -2283,7 +2633,9 @@ class TleadingTrader:
             if quantity <= 0:
                 raise ValueError("매도 수량은 1주 이상이어야 합니다.")
             if quantity > holding_quantity:
-                raise ValueError(f"보유 수량({holding_quantity}주)을 초과해 매도할 수 없습니다.")
+                raise ValueError(
+                    f"보유 수량({holding_quantity}주)을 초과해 매도할 수 없습니다."
+                )
             return quantity
 
         if ratio is None:

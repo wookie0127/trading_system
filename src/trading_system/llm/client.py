@@ -1,11 +1,12 @@
 import os
 from typing import Optional, Tuple
 from loguru import logger
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 try:
     from google import genai
     from google.genai import types
+
     HAS_GENAI = True
 except ImportError:
     HAS_GENAI = False
@@ -16,7 +17,9 @@ from src.trading_system.snapshots.schemas import MarketSnapshot
 
 
 class GeminiDecisionClient:
-    def __init__(self, model_name: str = "gemini-2.5-flash", api_key: Optional[str] = None):
+    def __init__(
+        self, model_name: str = "gemini-2.5-flash", api_key: Optional[str] = None
+    ):
         self.model_name = model_name
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         if HAS_GENAI and self.api_key:
@@ -25,9 +28,7 @@ class GeminiDecisionClient:
             self.client = None
 
     def get_decision(
-        self,
-        snapshot: MarketSnapshot,
-        strategy_guidelines: str = ""
+        self, snapshot: MarketSnapshot, strategy_guidelines: str = ""
     ) -> Tuple[TradingDecision, str, bool]:
         """
         Calls Gemini API with structured output schema.
@@ -37,8 +38,14 @@ class GeminiDecisionClient:
         user_prompt = build_user_prompt(snapshot, strategy_guidelines)
 
         if not self.client:
-            logger.warning("Gemini Client not initialized (missing key or library). Returning Fail-closed NO_TRADE.")
-            return self._fallback_no_trade("Gemini client not initialized"), "CLIENT_NOT_INITIALIZED", False
+            logger.warning(
+                "Gemini Client not initialized (missing key or library). Returning Fail-closed NO_TRADE."
+            )
+            return (
+                self._fallback_no_trade("Gemini client not initialized"),
+                "CLIENT_NOT_INITIALIZED",
+                False,
+            )
 
         try:
             raw_text = self._call_gemini_api_with_retry(user_prompt)
@@ -52,7 +59,7 @@ class GeminiDecisionClient:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        reraise=True
+        reraise=True,
     )
     def _call_gemini_api_with_retry(self, user_prompt: str) -> str:
         """
@@ -84,5 +91,5 @@ class GeminiDecisionClient:
             invalidation_conditions=["API error resolved"],
             alternative_scenario="Stay flat",
             risk_flags=["FAIL_CLOSED_TRIGGERED"],
-            risk_profile="CONSERVATIVE"
+            risk_profile="CONSERVATIVE",
         )

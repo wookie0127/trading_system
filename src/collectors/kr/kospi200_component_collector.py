@@ -6,9 +6,12 @@ Storage: market_data/metadata/kospi200_components/<YYYY-MM-DD>.parquet
 
 Schema: date | symbol | name | index_name
 """
+
 from __future__ import annotations
 
-import sys as _sys; from pathlib import Path as _Path
+import sys as _sys
+from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).parents[2]))  # src/ 패키지 루트
 del _sys, _Path
 
@@ -47,12 +50,14 @@ def _parse_components(raw: dict, target_date: date) -> pd.DataFrame:
         # KRX field names vary — try common keys
         symbol = item.get("ISU_SRT_CD") or item.get("CMP_CD") or ""
         name = item.get("ISU_ABBRV") or item.get("CMP_KOR") or ""
-        records.append({
-            "date": target_date,
-            "symbol": symbol.strip(),
-            "name": name.strip(),
-            "index_name": "KOSPI200",
-        })
+        records.append(
+            {
+                "date": target_date,
+                "symbol": symbol.strip(),
+                "name": name.strip(),
+                "index_name": "KOSPI200",
+            }
+        )
 
     return pd.DataFrame(records)
 
@@ -72,7 +77,7 @@ async def fetch_kospi200_components(target_date: date | None = None) -> pd.DataF
     payload = {
         "bld": "dbms/MDC/STAT/standard/MDCSTAT00601",
         "indIdx": "1",
-        "indIdx2": "028",   # KOSPI200
+        "indIdx2": "028",  # KOSPI200
         "trdDd": date_str,
         "money": "1",
         "csvxls_isNo": "false",
@@ -81,7 +86,9 @@ async def fetch_kospi200_components(target_date: date | None = None) -> pd.DataF
     # KRX requires a valid session cookie obtained by visiting the referer page first
     referer_url = "http://data.krx.co.kr/contents/MDC/MDI/mdiLoader/index.cmd?menuId=MDC0201020506"
 
-    async with httpx.AsyncClient(headers=_HEADERS, timeout=30, follow_redirects=True) as client:
+    async with httpx.AsyncClient(
+        headers=_HEADERS, timeout=30, follow_redirects=True
+    ) as client:
         # Step 1: Establish session by visiting the referer page
         await client.get(referer_url)
         # Step 2: POST the actual data request with the session cookie
@@ -91,8 +98,10 @@ async def fetch_kospi200_components(target_date: date | None = None) -> pd.DataF
 
     df = _parse_components(raw, target_date)
     if df.empty:
-        logger.warning(f"No KOSPI200 components returned for {target_date}. "
-                       "KRX may not have data for non-trading days.")
+        logger.warning(
+            f"No KOSPI200 components returned for {target_date}. "
+            "KRX may not have data for non-trading days."
+        )
     else:
         logger.info(f"Found {len(df)} KOSPI200 components for {target_date}")
     return df

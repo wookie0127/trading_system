@@ -21,7 +21,9 @@ def summarize_returns(
     trade_returns: list[float],
     trading_days_per_year: int = 252,
 ) -> dict[str, float | int]:
-    cleaned_returns = [0.0 if value is None else float(value) for value in daily_returns]
+    cleaned_returns = [
+        0.0 if value is None else float(value) for value in daily_returns
+    ]
     equity: list[float] = []
     current = 1.0
     for value in cleaned_returns:
@@ -32,7 +34,9 @@ def summarize_returns(
     years = max(len(cleaned_returns) / trading_days_per_year, 1 / trading_days_per_year)
     annualized_return = (1 + total_return) ** (1 / years) - 1
     std = pstdev(cleaned_returns) if len(cleaned_returns) > 1 else 0.0
-    sharpe_ratio = math.sqrt(trading_days_per_year) * fmean(cleaned_returns) / std if std else 0.0
+    sharpe_ratio = (
+        math.sqrt(trading_days_per_year) * fmean(cleaned_returns) / std if std else 0.0
+    )
     number_of_trades = len(trade_returns)
     wins = sum(1 for value in trade_returns if value > 0)
     return {

@@ -99,17 +99,24 @@ class MarkdownReporter:
             subset = features.sort("date").group_by("symbol").tail(window)
             perf = (
                 subset.group_by("symbol")
-                .agg(((pl.col("return_1d").fill_null(0) + 1).product() - 1).alias("return"))
+                .agg(
+                    ((pl.col("return_1d").fill_null(0) + 1).product() - 1).alias(
+                        "return"
+                    )
+                )
                 .sort("return", descending=True)
                 .head(3)
             )
             formatted = ", ".join(
-                f"{row['symbol']}: {row['return']:.2%}" for row in perf.iter_rows(named=True)
+                f"{row['symbol']}: {row['return']:.2%}"
+                for row in perf.iter_rows(named=True)
             )
             rows.append(f"- Recent {window} rows return leaders: {formatted}")
         return "\n".join(rows)
 
-    def _to_markdown_table(self, headers: list[str], rows: list[dict[str, object]]) -> str:
+    def _to_markdown_table(
+        self, headers: list[str], rows: list[dict[str, object]]
+    ) -> str:
         lines = [
             "| " + " | ".join(headers) + " |",
             "| " + " | ".join(["---"] * len(headers)) + " |",

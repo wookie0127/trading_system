@@ -1,4 +1,3 @@
-import os
 import time
 import requests
 import polars as pl
@@ -6,10 +5,11 @@ from datetime import datetime, date
 from pathlib import Path
 from loguru import logger
 
+
 def fetch_binance_1m(
     symbol: str = "BTCUSDT",
     start_date: str | date = "2026-06-01",
-    end_date: str | date = "2026-07-10"
+    end_date: str | date = "2026-07-10",
 ) -> pl.DataFrame:
     """
     Downloads historical 1-minute OHLCV data from Binance public REST API.
@@ -39,7 +39,7 @@ def fetch_binance_1m(
             "symbol": symbol,
             "interval": "1m",
             "startTime": current_ms,
-            "limit": 1000
+            "limit": 1000,
         }
         try:
             resp = requests.get(url, params=params, timeout=10)
@@ -55,11 +55,11 @@ def fetch_binance_1m(
             break
 
         all_klines.extend(data)
-        
+
         # Get the timestamp of the last item in this batch
         last_ts = data[-1][0]
         logger.debug(f"Fetched up to {datetime.fromtimestamp(last_ts / 1000)}")
-        
+
         if last_ts >= end_ms:
             break
 
@@ -89,15 +89,17 @@ def fetch_binance_1m(
         ts_ms = kline[0]
         if ts_ms > end_ms:
             continue
-        records.append({
-            "timestamp": datetime.fromtimestamp(ts_ms / 1000),
-            "symbol": symbol,
-            "open": float(kline[1]),
-            "high": float(kline[2]),
-            "low": float(kline[3]),
-            "close": float(kline[4]),
-            "volume": float(kline[5]),
-        })
+        records.append(
+            {
+                "timestamp": datetime.fromtimestamp(ts_ms / 1000),
+                "symbol": symbol,
+                "open": float(kline[1]),
+                "high": float(kline[2]),
+                "low": float(kline[3]),
+                "close": float(kline[4]),
+                "volume": float(kline[5]),
+            }
+        )
 
     df = pl.DataFrame(records)
     # Sort and drop duplicates
@@ -105,11 +107,13 @@ def fetch_binance_1m(
     logger.success(f"Successfully downloaded {df.height} 1m candles for {symbol}.")
     return df
 
+
 def save_binance_data(df: pl.DataFrame, output_path: str | Path) -> None:
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     df.write_parquet(path)
     logger.info(f"Saved dataset to {path}")
+
 
 if __name__ == "__main__":
     df = fetch_binance_1m("BTCUSDT", "2026-06-01", "2026-07-10")

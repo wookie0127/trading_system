@@ -14,20 +14,20 @@ MARKET_DATA_DIR = PROJECT_ROOT / "dataset" / "market_data"
 _NUMERIC_FLOAT_COLUMNS = ("open", "high", "low", "close", "volume", "trade_value")
 
 _PATHS = {
-    "nasdaq_1min":           MARKET_DATA_DIR / "us" / "nasdaq" / "1min",
-    "us_stock_1min":         MARKET_DATA_DIR / "us" / "stock" / "1min",
-    "us_daily":              MARKET_DATA_DIR / "us" / "daily",
-    "global_daily":          MARKET_DATA_DIR / "global" / "daily",
-    "global_1min":           MARKET_DATA_DIR / "global" / "1min",
-    "kospi200_1min":         MARKET_DATA_DIR / "kr" / "kospi200" / "1min",
-    "kr_stock_1min":         MARKET_DATA_DIR / "kr" / "stock" / "1min",
-    "kr_stock_daily":        MARKET_DATA_DIR / "kr" / "stock" / "daily",
-    "investor_flow_daily":   MARKET_DATA_DIR / "kr" / "investor_flow" / "daily",
-    "investor_flow_10min":   MARKET_DATA_DIR / "kr" / "investor_flow" / "10min",
-    "kospi200_daily_yf":     MARKET_DATA_DIR / "kr" / "kospi200" / "daily",
-    "kospi200_components":   MARKET_DATA_DIR / "metadata" / "kospi200_components",
-    "us_stock_daily":        MARKET_DATA_DIR / "us" / "stock" / "daily",
-    "crypto_1min":           MARKET_DATA_DIR / "crypto" / "1min",
+    "nasdaq_1min": MARKET_DATA_DIR / "us" / "nasdaq" / "1min",
+    "us_stock_1min": MARKET_DATA_DIR / "us" / "stock" / "1min",
+    "us_daily": MARKET_DATA_DIR / "us" / "daily",
+    "global_daily": MARKET_DATA_DIR / "global" / "daily",
+    "global_1min": MARKET_DATA_DIR / "global" / "1min",
+    "kospi200_1min": MARKET_DATA_DIR / "kr" / "kospi200" / "1min",
+    "kr_stock_1min": MARKET_DATA_DIR / "kr" / "stock" / "1min",
+    "kr_stock_daily": MARKET_DATA_DIR / "kr" / "stock" / "daily",
+    "investor_flow_daily": MARKET_DATA_DIR / "kr" / "investor_flow" / "daily",
+    "investor_flow_10min": MARKET_DATA_DIR / "kr" / "investor_flow" / "10min",
+    "kospi200_daily_yf": MARKET_DATA_DIR / "kr" / "kospi200" / "daily",
+    "kospi200_components": MARKET_DATA_DIR / "metadata" / "kospi200_components",
+    "us_stock_daily": MARKET_DATA_DIR / "us" / "stock" / "daily",
+    "crypto_1min": MARKET_DATA_DIR / "crypto" / "1min",
 }
 
 
@@ -42,14 +42,18 @@ def _normalize_schema(df: pd.DataFrame) -> pd.DataFrame:
     normalized = df.copy()
 
     if "timestamp" in normalized.columns:
-        normalized["timestamp"] = pd.to_datetime(normalized["timestamp"], errors="coerce")
+        normalized["timestamp"] = pd.to_datetime(
+            normalized["timestamp"], errors="coerce"
+        )
 
     if "symbol" in normalized.columns:
         normalized["symbol"] = normalized["symbol"].astype("string")
 
     for col in _NUMERIC_FLOAT_COLUMNS:
         if col in normalized.columns:
-            normalized[col] = pd.to_numeric(normalized[col], errors="coerce").astype("float64")
+            normalized[col] = pd.to_numeric(normalized[col], errors="coerce").astype(
+                "float64"
+            )
 
     return normalized
 

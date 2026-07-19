@@ -21,7 +21,9 @@ class FeatureAgent:
             for path in sorted(self.repository.resolve(raw_dir).glob("*.parquet"))
         ]
         if not frames:
-            raise FileNotFoundError(f"No raw parquet files found in {self.repository.resolve(raw_dir)}")
+            raise FileNotFoundError(
+                f"No raw parquet files found in {self.repository.resolve(raw_dir)}"
+            )
         raw = pl.concat(frames, how="vertical")
         features = build_feature_dataset(raw)
         output = Path(self.config["data"]["features_dir"]) / "feature_dataset.parquet"

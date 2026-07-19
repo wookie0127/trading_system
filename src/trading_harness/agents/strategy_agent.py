@@ -7,7 +7,9 @@ import polars as pl
 from trading_harness.config import load_yaml
 from trading_harness.data.repository import ParquetRepository
 from trading_harness.strategies.trend_following import SimpleTrendFollowingStrategy
-from trading_harness.strategies.us_market_shock_inverse import USMarketShockInverseStrategy
+from trading_harness.strategies.us_market_shock_inverse import (
+    USMarketShockInverseStrategy,
+)
 
 
 class StrategyAgent:
@@ -21,7 +23,9 @@ class StrategyAgent:
         self.repository = ParquetRepository()
 
     def run(self) -> dict[str, Path]:
-        feature_path = Path(self.ticker_config["data"]["features_dir"]) / "feature_dataset.parquet"
+        feature_path = (
+            Path(self.ticker_config["data"]["features_dir"]) / "feature_dataset.parquet"
+        )
         features = self.repository.read(feature_path)
         outputs: dict[str, Path] = {}
         configs = self.strategy_config["strategies"]
@@ -35,13 +39,17 @@ class StrategyAgent:
                 vix_change_threshold=shock_config.get("vix_change_threshold", 0.05),
             )
             signals = strategy.generate(features)
-            outputs[strategy.name] = self.repository.write(signals, shock_config["output"])
+            outputs[strategy.name] = self.repository.write(
+                signals, shock_config["output"]
+            )
 
         trend_config = configs["trend_following"]
         if trend_config.get("enabled", True):
             strategy = SimpleTrendFollowingStrategy(symbols=trend_config.get("symbols"))
             signals = strategy.generate(features)
-            outputs[strategy.name] = self.repository.write(signals, trend_config["output"])
+            outputs[strategy.name] = self.repository.write(
+                signals, trend_config["output"]
+            )
 
         return outputs
 

@@ -52,7 +52,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
-from storage.parquet_writer import daily_path, write_parquet, get_dir
+from storage.parquet_writer import daily_path, write_parquet
 from storage.data_validation import validate_intraday
 
 # ---------------------------------------------------------------------------
@@ -74,48 +74,48 @@ def _resolve_reference_dir() -> Path:
 
 REFERENCE_DIR = _resolve_reference_dir()
 
-_INTRADAY_CHUNK_DAYS = 7      # 요청당 최대 7 calendar days (yfinance 제한)
-_INTRADAY_LOOKBACK   = 28     # 총 lookback: 28 calendar days (~20 거래일)
-_DAILY_BATCH_SIZE    = 50     # 일봉 배치당 종목 수
-_INTRADAY_BATCH_SIZE = 20     # 1분봉 배치당 종목 수 (메모리 절약)
+_INTRADAY_CHUNK_DAYS = 7  # 요청당 최대 7 calendar days (yfinance 제한)
+_INTRADAY_LOOKBACK = 28  # 총 lookback: 28 calendar days (~20 거래일)
+_DAILY_BATCH_SIZE = 50  # 일봉 배치당 종목 수
+_INTRADAY_BATCH_SIZE = 20  # 1분봉 배치당 종목 수 (메모리 절약)
 
 MarketKey = Literal["kospi200", "qqq", "us_etf_core", "sp500", "nasdaq100"]
 
 _MARKET_CONFIG: dict[str, dict] = {
     "kospi200": {
-        "json_file":       REFERENCE_DIR / "kospi200_symbols.json",
-        "yf_suffix":       ".KS",
-        "daily_path_key":  "kospi200_daily_yf",
+        "json_file": REFERENCE_DIR / "kospi200_symbols.json",
+        "yf_suffix": ".KS",
+        "daily_path_key": "kospi200_daily_yf",
         "intraday_path_key": "kospi200_1min",
-        "region":          "KR",
+        "region": "KR",
     },
     "qqq": {
-        "json_file":       REFERENCE_DIR / "qqq_symbols.json",
-        "yf_suffix":       "",
-        "daily_path_key":  "us_stock_daily",
+        "json_file": REFERENCE_DIR / "qqq_symbols.json",
+        "yf_suffix": "",
+        "daily_path_key": "us_stock_daily",
         "intraday_path_key": "us_stock_1min",
-        "region":          "US",
+        "region": "US",
     },
     "us_etf_core": {
-        "json_file":       REFERENCE_DIR / "us_etf_core_symbols.json",
-        "yf_suffix":       "",
-        "daily_path_key":  "us_stock_daily",
+        "json_file": REFERENCE_DIR / "us_etf_core_symbols.json",
+        "yf_suffix": "",
+        "daily_path_key": "us_stock_daily",
         "intraday_path_key": "us_stock_1min",
-        "region":          "US",
+        "region": "US",
     },
     "sp500": {
-        "json_file":       REFERENCE_DIR / "sp500_symbols.json",
-        "yf_suffix":       "",
-        "daily_path_key":  "us_stock_daily",
+        "json_file": REFERENCE_DIR / "sp500_symbols.json",
+        "yf_suffix": "",
+        "daily_path_key": "us_stock_daily",
         "intraday_path_key": "us_stock_1min",
-        "region":          "US",
+        "region": "US",
     },
     "nasdaq100": {
-        "json_file":       REFERENCE_DIR / "nasdaq100_symbols.json",
-        "yf_suffix":       "",
-        "daily_path_key":  "us_stock_daily",
+        "json_file": REFERENCE_DIR / "nasdaq100_symbols.json",
+        "yf_suffix": "",
+        "daily_path_key": "us_stock_daily",
         "intraday_path_key": "us_stock_1min",
-        "region":          "US",
+        "region": "US",
     },
 }
 
@@ -123,6 +123,7 @@ _MARKET_CONFIG: dict[str, dict] = {
 # ---------------------------------------------------------------------------
 # Symbol loader
 # ---------------------------------------------------------------------------
+
 
 def load_symbols(market: MarketKey) -> list[dict]:
     """JSON reference 파일에서 symbol/name 목록을 반환."""
@@ -136,7 +137,9 @@ def load_symbols(market: MarketKey) -> list[dict]:
     with path.open(encoding="utf-8") as f:
         data = json.load(f)
     components = data.get("components", [])
-    logger.info(f"[{market}] {len(components)}종목 로드 (updated_at={data.get('updated_at')})")
+    logger.info(
+        f"[{market}] {len(components)}종목 로드 (updated_at={data.get('updated_at')})"
+    )
     return components
 
 
@@ -169,6 +172,7 @@ def _extract_symbol_frame(raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
 # Daily backfill (yfinance period='max')
 # ---------------------------------------------------------------------------
 
+
 def _download_daily_max(yf_symbols: list[str]) -> pd.DataFrame:
     """yfinance에서 period='max' 일봉 다운로드 → tidy DataFrame."""
     raw = yf.download(
@@ -186,13 +190,36 @@ def _download_daily_max(yf_symbols: list[str]) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
 
     if len(yf_symbols) == 1:
-        sub = _extract_symbol_frame(raw, yf_symbols[0]).reset_index().rename(columns={
-            "Date": "timestamp", "Open": "open", "High": "high",
-            "Low": "low", "Close": "close", "Volume": "volume",
-        })
+        sub = (
+            _extract_symbol_frame(raw, yf_symbols[0])
+            .reset_index()
+            .rename(
+                columns={
+                    "Date": "timestamp",
+                    "Open": "open",
+                    "High": "high",
+                    "Low": "low",
+                    "Close": "close",
+                    "Volume": "volume",
+                }
+            )
+        )
         sub["symbol"] = yf_symbols[0]
         sub["trade_value"] = sub["close"] * sub["volume"]
-        frames.append(sub[["timestamp", "symbol", "open", "high", "low", "close", "volume", "trade_value"]])
+        frames.append(
+            sub[
+                [
+                    "timestamp",
+                    "symbol",
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "volume",
+                    "trade_value",
+                ]
+            ]
+        )
     else:
         for sym in yf_symbols:
             try:
@@ -202,13 +229,32 @@ def _download_daily_max(yf_symbols: list[str]) -> pd.DataFrame:
                 continue
             if sub.empty:
                 continue
-            sub = sub.reset_index().rename(columns={
-                "Date": "timestamp", "Open": "open", "High": "high",
-                "Low": "low", "Close": "close", "Volume": "volume",
-            })
+            sub = sub.reset_index().rename(
+                columns={
+                    "Date": "timestamp",
+                    "Open": "open",
+                    "High": "high",
+                    "Low": "low",
+                    "Close": "close",
+                    "Volume": "volume",
+                }
+            )
             sub["symbol"] = sym
             sub["trade_value"] = sub["close"] * sub["volume"]
-            frames.append(sub[["timestamp", "symbol", "open", "high", "low", "close", "volume", "trade_value"]])
+            frames.append(
+                sub[
+                    [
+                        "timestamp",
+                        "symbol",
+                        "open",
+                        "high",
+                        "low",
+                        "close",
+                        "volume",
+                        "trade_value",
+                    ]
+                ]
+            )
 
     if not frames:
         return pd.DataFrame()
@@ -235,7 +281,7 @@ async def backfill_daily(
 
     for i in range(0, total, batch_size):
         batch = yf_symbols[i : i + batch_size]
-        batch_label = f"{i+1}~{min(i+batch_size, total)}/{total}"
+        batch_label = f"{i + 1}~{min(i + batch_size, total)}/{total}"
         logger.info(f"  일봉 배치 {batch_label} ({len(batch)}종목) 다운로드 중...")
 
         try:
@@ -267,6 +313,7 @@ async def backfill_daily(
 # Intraday (1-min) backfill — 7-day chunk × 4 = 28 calendar days
 # ---------------------------------------------------------------------------
 
+
 def _download_1min_chunk(yf_symbols: list[str], start: date, end: date) -> pd.DataFrame:
     """단일 청크(≤7 calendar days) 1분봉 다운로드."""
     raw = yf.download(
@@ -285,13 +332,25 @@ def _download_1min_chunk(yf_symbols: list[str], start: date, end: date) -> pd.Da
     frames: list[pd.DataFrame] = []
 
     if len(yf_symbols) == 1:
-        sub = _extract_symbol_frame(raw, yf_symbols[0]).reset_index().rename(columns={
-            "Datetime": "timestamp", "Date": "timestamp",
-            "Open": "open", "High": "high", "Low": "low",
-            "Close": "close", "Volume": "volume",
-        })
+        sub = (
+            _extract_symbol_frame(raw, yf_symbols[0])
+            .reset_index()
+            .rename(
+                columns={
+                    "Datetime": "timestamp",
+                    "Date": "timestamp",
+                    "Open": "open",
+                    "High": "high",
+                    "Low": "low",
+                    "Close": "close",
+                    "Volume": "volume",
+                }
+            )
+        )
         sub["symbol"] = yf_symbols[0]
-        frames.append(sub[["timestamp", "symbol", "open", "high", "low", "close", "volume"]])
+        frames.append(
+            sub[["timestamp", "symbol", "open", "high", "low", "close", "volume"]]
+        )
     else:
         for sym in yf_symbols:
             try:
@@ -300,13 +359,21 @@ def _download_1min_chunk(yf_symbols: list[str], start: date, end: date) -> pd.Da
                 continue
             if sub.empty:
                 continue
-            sub = sub.reset_index().rename(columns={
-                "Datetime": "timestamp", "Date": "timestamp",
-                "Open": "open", "High": "high", "Low": "low",
-                "Close": "close", "Volume": "volume",
-            })
+            sub = sub.reset_index().rename(
+                columns={
+                    "Datetime": "timestamp",
+                    "Date": "timestamp",
+                    "Open": "open",
+                    "High": "high",
+                    "Low": "low",
+                    "Close": "close",
+                    "Volume": "volume",
+                }
+            )
             sub["symbol"] = sym
-            frames.append(sub[["timestamp", "symbol", "open", "high", "low", "close", "volume"]])
+            frames.append(
+                sub[["timestamp", "symbol", "open", "high", "low", "close", "volume"]]
+            )
 
     if not frames:
         return pd.DataFrame()
@@ -314,7 +381,9 @@ def _download_1min_chunk(yf_symbols: list[str], start: date, end: date) -> pd.Da
     combined = pd.concat(frames, ignore_index=True)
     # tz-naive UTC 정규화
     if "timestamp" in combined.columns and combined["timestamp"].dt.tz is not None:
-        combined["timestamp"] = combined["timestamp"].dt.tz_convert("UTC").dt.tz_localize(None)
+        combined["timestamp"] = (
+            combined["timestamp"].dt.tz_convert("UTC").dt.tz_localize(None)
+        )
     return combined.dropna(subset=["open", "close"])
 
 
@@ -337,8 +406,11 @@ async def backfill_intraday(
     chunks: list[tuple[date, date]] = []
     offset = 0
     while offset < lookback_days:
-        chunk_end   = today - timedelta(days=offset)
-        chunk_start = max(chunk_end - timedelta(days=chunk_days), today - timedelta(days=lookback_days))
+        chunk_end = today - timedelta(days=offset)
+        chunk_start = max(
+            chunk_end - timedelta(days=chunk_days),
+            today - timedelta(days=lookback_days),
+        )
         chunks.append((chunk_start, chunk_end))
         offset += chunk_days
 
@@ -356,10 +428,12 @@ async def backfill_intraday(
 
         for i in range(0, total, batch_size):
             batch = yf_symbols[i : i + batch_size]
-            batch_label = f"{i+1}~{min(i+batch_size, total)}/{total}"
+            batch_label = f"{i + 1}~{min(i + batch_size, total)}/{total}"
 
             try:
-                df = await asyncio.to_thread(_download_1min_chunk, batch, chunk_start, chunk_end)
+                df = await asyncio.to_thread(
+                    _download_1min_chunk, batch, chunk_start, chunk_end
+                )
             except Exception as e:
                 logger.error(f"    배치 {batch_label} 실패: {e}")
                 failed_chunks += 1
@@ -375,10 +449,16 @@ async def backfill_intraday(
                 continue
 
             # 날짜별 분할 저장
-            df["_date"] = df["timestamp"].dt.date if hasattr(df["timestamp"].dt, "date") else pd.to_datetime(df["timestamp"]).dt.date
+            df["_date"] = (
+                df["timestamp"].dt.date
+                if hasattr(df["timestamp"].dt, "date")
+                else pd.to_datetime(df["timestamp"]).dt.date
+            )
             for day, group in df.groupby("_date"):
                 dest = daily_path(path_key, str(day))
-                write_parquet(group.drop(columns=["_date"]).reset_index(drop=True), dest)
+                write_parquet(
+                    group.drop(columns=["_date"]).reset_index(drop=True), dest
+                )
 
             chunk_rows += len(df)
             await asyncio.sleep(0.5)
@@ -394,6 +474,7 @@ async def backfill_intraday(
 # 단일 마켓 backfill
 # ---------------------------------------------------------------------------
 
+
 async def backfill_market(
     market: MarketKey,
     skip_daily: bool = False,
@@ -406,9 +487,9 @@ async def backfill_market(
         logger.error(f"[{market}] 종목 없음. 종료.")
         return
 
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
     logger.info(f"[{market}] Bulk Backfill 시작: {len(symbols)}종목")
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
 
     results = {}
 
@@ -421,8 +502,12 @@ async def backfill_market(
         )
 
     if not skip_intraday:
-        logger.info(f"[{market}] [2/2] 1분봉 backfill (최근 {_INTRADAY_LOOKBACK}일, {_INTRADAY_CHUNK_DAYS}일 청크)")
-        results["intraday"] = await backfill_intraday(market, symbols, batch_size=intraday_batch_size)
+        logger.info(
+            f"[{market}] [2/2] 1분봉 backfill (최근 {_INTRADAY_LOOKBACK}일, {_INTRADAY_CHUNK_DAYS}일 청크)"
+        )
+        results["intraday"] = await backfill_intraday(
+            market, symbols, batch_size=intraday_batch_size
+        )
         logger.success(
             f"[{market}] 1분봉 완료: {results['intraday']['total_rows']}행, "
             f"실패청크={results['intraday']['failed_chunks']}"
@@ -475,7 +560,9 @@ try:
                 if not skip_daily:
                     daily_result = await daily_backfill_task(mkt, daily_batch_size)
                 if not skip_intraday:
-                    intraday_result = await intraday_backfill_task(mkt, intraday_batch_size)
+                    intraday_result = await intraday_backfill_task(
+                        mkt, intraday_batch_size
+                    )
 
                 msg = f"✅ *[Bulk Backfill]* `{mkt}` 완료\n"
                 if not skip_daily:
@@ -530,10 +617,14 @@ if __name__ == "__main__":
         default="kospi200",
         help="수집할 마켓 (default: kospi200)",
     )
-    parser.add_argument("--skip-daily",    action="store_true", help="일봉 수집 건너뜀")
-    parser.add_argument("--skip-intraday", action="store_true", help="1분봉 수집 건너뜀")
+    parser.add_argument("--skip-daily", action="store_true", help="일봉 수집 건너뜀")
     parser.add_argument(
-        "--batch-size", type=int, default=_DAILY_BATCH_SIZE,
+        "--skip-intraday", action="store_true", help="1분봉 수집 건너뜀"
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=_DAILY_BATCH_SIZE,
         help=f"배치 크기 (일봉 default={_DAILY_BATCH_SIZE}, 1분봉은 절반 사용)",
     )
     args = parser.parse_args()

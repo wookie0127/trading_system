@@ -16,14 +16,22 @@ def normalize_ohlcv(raw: Any, symbol: str) -> pl.DataFrame:
         df = raw.clone()
     else:
         pandas_df = raw.copy()
-        if hasattr(pandas_df, "columns") and hasattr(pandas_df.columns, "nlevels") and pandas_df.columns.nlevels > 1:
+        if (
+            hasattr(pandas_df, "columns")
+            and hasattr(pandas_df.columns, "nlevels")
+            and pandas_df.columns.nlevels > 1
+        ):
             pandas_df.columns = [str(col[0]).lower() for col in pandas_df.columns]
         else:
-            pandas_df.columns = [str(col).lower().replace(" ", "_") for col in pandas_df.columns]
+            pandas_df.columns = [
+                str(col).lower().replace(" ", "_") for col in pandas_df.columns
+            ]
 
         if "date" not in pandas_df.columns:
             pandas_df = pandas_df.reset_index()
-            pandas_df.columns = [str(col).lower().replace(" ", "_") for col in pandas_df.columns]
+            pandas_df.columns = [
+                str(col).lower().replace(" ", "_") for col in pandas_df.columns
+            ]
         df = pl.from_pandas(pandas_df)
 
     rename_map = {col: col.lower().replace(" ", "_") for col in df.columns}
@@ -37,7 +45,9 @@ def normalize_ohlcv(raw: Any, symbol: str) -> pl.DataFrame:
     if "volume" not in df.columns:
         df = df.with_columns(pl.lit(0).alias("volume"))
 
-    missing = [col for col in ["date", "open", "high", "low", "close"] if col not in df.columns]
+    missing = [
+        col for col in ["date", "open", "high", "low", "close"] if col not in df.columns
+    ]
     if missing:
         raise ValueError(f"{symbol}: missing OHLCV columns: {missing}")
 

@@ -5,7 +5,10 @@ Includes Slack notifications for start/completion/failure.
 Requirements:
     pip install prefect slack-sdk
 """
-import sys as _sys; from pathlib import Path as _Path
+
+import sys as _sys
+from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).parents[1]))  # src/ 패키지 루트
 del _sys, _Path
 
@@ -43,10 +46,12 @@ async def notify_start():
     notifier = Notifier()
     await notifier.notify_all(msg)
 
+
 @task(name="Sync Data", retries=2, retry_delay_seconds=30)
 async def sync_data_task():
     success, total = await run_sync_all()
     return success, total
+
 
 @task(name="Notify Success")
 async def notify_success(stats: tuple[int, int]):
@@ -57,6 +62,7 @@ async def notify_success(stats: tuple[int, int]):
     notifier = Notifier()
     await notifier.notify_all(msg)
 
+
 @task(name="Notify Failure")
 async def notify_failure(error_msg: str):
     logger = get_run_logger()
@@ -64,6 +70,7 @@ async def notify_failure(error_msg: str):
     logger.error(msg)
     notifier = Notifier()
     await notifier.notify_all(msg)
+
 
 @flow(name="KIS-Intraday-Sync-Flow")
 async def intraday_sync_flow():
@@ -74,6 +81,7 @@ async def intraday_sync_flow():
     except Exception as e:
         await notify_failure(str(e))
         raise e
+
 
 if __name__ == "__main__":
     # To run locally: python src/intraday_orchestrator.py

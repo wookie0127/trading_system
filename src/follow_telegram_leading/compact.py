@@ -34,7 +34,9 @@ class TleadingHistoryCompactor:
         kospi_provider=None,
     ):
         self.store = ReadingStore(base_dir=base_dir)
-        self.output_dir = Path(output_dir) if output_dir else self.store.base_dir / "compact"
+        self.output_dir = (
+            Path(output_dir) if output_dir else self.store.base_dir / "compact"
+        )
         self.kospi_provider = kospi_provider or fetch_kospi_snapshot
 
     def compact(self, compact_date: date | str | None = None) -> CompactResult:
@@ -122,12 +124,20 @@ def fetch_kospi_snapshot(target_date: date) -> dict[str, Any]:
     previous_close = None
     if len(frame) >= 2:
         previous_close = _to_number(frame.iloc[-2].get("종가"))
-    change = close - previous_close if close is not None and previous_close is not None else None
-    change_pct = change / previous_close if change is not None and previous_close else None
+    change = (
+        close - previous_close
+        if close is not None and previous_close is not None
+        else None
+    )
+    change_pct = (
+        change / previous_close if change is not None and previous_close else None
+    )
 
     return {
         "symbol": "KOSPI",
-        "date": index_date.isoformat() if hasattr(index_date, "isoformat") else str(index_date),
+        "date": index_date.isoformat()
+        if hasattr(index_date, "isoformat")
+        else str(index_date),
         "source": "pykrx",
         "status": "ok",
         "open": open_,
@@ -140,12 +150,16 @@ def fetch_kospi_snapshot(target_date: date) -> dict[str, Any]:
     }
 
 
-def _fetch_kospi_snapshot_from_fdr(target_date: date, pykrx_error: str | None = None) -> dict[str, Any]:
+def _fetch_kospi_snapshot_from_fdr(
+    target_date: date, pykrx_error: str | None = None
+) -> dict[str, Any]:
     start = target_date - timedelta(days=7)
     try:
         frame = fdr.DataReader("KS11", start.isoformat(), target_date.isoformat())
     except Exception as exc:
-        logger.warning("Failed to fetch KOSPI snapshot from FDR for {}: {}", target_date, exc)
+        logger.warning(
+            "Failed to fetch KOSPI snapshot from FDR for {}: {}", target_date, exc
+        )
         return {
             "symbol": "KOSPI",
             "date": target_date.isoformat(),
@@ -174,12 +188,20 @@ def _fetch_kospi_snapshot_from_fdr(target_date: date, pykrx_error: str | None = 
     previous_close = None
     if len(frame) >= 2:
         previous_close = _to_number(frame.iloc[-2].get("Close"))
-    change = close - previous_close if close is not None and previous_close is not None else _to_number(row.get("Change"))
-    change_pct = change / previous_close if change is not None and previous_close else None
+    change = (
+        close - previous_close
+        if close is not None and previous_close is not None
+        else _to_number(row.get("Change"))
+    )
+    change_pct = (
+        change / previous_close if change is not None and previous_close else None
+    )
 
     return {
         "symbol": "KOSPI",
-        "date": index_date.isoformat() if hasattr(index_date, "isoformat") else str(index_date),
+        "date": index_date.isoformat()
+        if hasattr(index_date, "isoformat")
+        else str(index_date),
         "source": "fdr",
         "status": "ok",
         "open": open_,
@@ -206,7 +228,11 @@ def _build_compact_records(
 
     keys = sorted(
         set(messages_by_key) | set(signals_by_key) | set(journal_by_key),
-        key=lambda key: _sort_time(messages_by_key.get(key), signals_by_key.get(key), journal_by_key.get(key, [{}])[0]),
+        key=lambda key: _sort_time(
+            messages_by_key.get(key),
+            signals_by_key.get(key),
+            journal_by_key.get(key, [{}])[0],
+        ),
     )
 
     compact_records = []
@@ -218,19 +244,33 @@ def _build_compact_records(
         compact_records.append(
             {
                 "chat_id": _first_present(message, signal, latest_decision, "chat_id"),
-                "chat_title": _first_present(message, signal, latest_decision, "chat_title"),
-                "strategy_name": _first_present(signal, latest_decision, "strategy_name"),
-                "message_id": _first_present(message, signal, latest_decision, "message_id"),
-                "posted_at": _first_present(message, signal, latest_decision, "posted_at"),
-                "company": _first_present_key((signal, latest_decision), ("company_name", "company")),
+                "chat_title": _first_present(
+                    message, signal, latest_decision, "chat_title"
+                ),
+                "strategy_name": _first_present(
+                    signal, latest_decision, "strategy_name"
+                ),
+                "message_id": _first_present(
+                    message, signal, latest_decision, "message_id"
+                ),
+                "posted_at": _first_present(
+                    message, signal, latest_decision, "posted_at"
+                ),
+                "company": _first_present_key(
+                    (signal, latest_decision), ("company_name", "company")
+                ),
                 "action": _first_present(signal, latest_decision, "action"),
                 "trade_style": _first_present(signal, latest_decision, "trade_style"),
                 "confidence": _first_present(signal, latest_decision, "confidence"),
                 "decision": latest_decision.get("decision"),
                 "reason": latest_decision.get("reason"),
                 "summary": _first_present(signal, latest_decision, "summary"),
-                "rationale_text": _first_present(signal, latest_decision, "rationale_text"),
-                "raw_text": message.get("raw_text") or signal.get("raw_text") or latest_decision.get("raw_text"),
+                "rationale_text": _first_present(
+                    signal, latest_decision, "rationale_text"
+                ),
+                "raw_text": message.get("raw_text")
+                or signal.get("raw_text")
+                or latest_decision.get("raw_text"),
                 "decisions": decisions,
             }
         )
@@ -335,8 +375,12 @@ def _load_jsonl(path: Path) -> list[dict]:
     return records
 
 
-def _filter_records_by_date(records: list[dict], target_date: date, field: str) -> list[dict]:
-    return [record for record in records if _record_date(record.get(field)) == target_date]
+def _filter_records_by_date(
+    records: list[dict], target_date: date, field: str
+) -> list[dict]:
+    return [
+        record for record in records if _record_date(record.get(field)) == target_date
+    ]
 
 
 def _record_date(raw_value) -> date | None:

@@ -10,7 +10,10 @@ from loguru import logger
 import discord
 import anyio
 
-from follow_telegram_leading.signal_schema import ReadingMessage, TelegramDialog  # ty:ignore[unresolved-import]
+from follow_telegram_leading.signal_schema import (
+    ReadingMessage,
+    TelegramDialog,
+)  # ty:ignore[unresolved-import]
 
 try:
     from telethon import TelegramClient, events
@@ -33,6 +36,7 @@ if API_KEYS_PATH.exists():
 
 SESSION_BASENAME = CURRENT_DIR / "test_check"
 
+
 async def get_discord_input(
     prompt: str,
     *,
@@ -49,7 +53,9 @@ async def get_discord_input(
 
     if not token or not target_channel_id:
         # 폴백: Discord 정보가 없으면 터미널 입력 사용
-        logger.warning("DISCORD_TOKEN or DISCORD_CHANNEL_ID missing. Falling back to terminal input.")
+        logger.warning(
+            "DISCORD_TOKEN or DISCORD_CHANNEL_ID missing. Falling back to terminal input."
+        )
         return input(f"{prompt}: ")
 
     intents = discord.Intents.default()
@@ -67,7 +73,9 @@ async def get_discord_input(
         channel = None
         if preferred_channel_name:
             for guild in client.guilds:
-                channel = discord.utils.get(guild.text_channels, name=preferred_channel_name)
+                channel = discord.utils.get(
+                    guild.text_channels, name=preferred_channel_name
+                )
                 if channel:
                     logger.info(
                         "Found Discord input channel by name '{}' in guild '{}'",
@@ -91,14 +99,17 @@ async def get_discord_input(
                 preferred_channel_name,
                 target_channel_id,
             )
-            await send_stream.send(None) # 에러 상황 알림
+            await send_stream.send(None)  # 에러 상황 알림
 
     @client.event
     async def on_message(message):
         if message.author.bot:
             return
 
-        if selected_channel["id"] is None or message.channel.id != selected_channel["id"]:
+        if (
+            selected_channel["id"] is None
+            or message.channel.id != selected_channel["id"]
+        ):
             return
 
         content = message.content.strip()
@@ -139,7 +150,9 @@ async def get_discord_input(
             await client.close()
 
 
-async def _send_discord_prompt(channel, request_label: str, prompt: str, prompt_suffix: str) -> None:
+async def _send_discord_prompt(
+    channel, request_label: str, prompt: str, prompt_suffix: str
+) -> None:
     prefix = f"{request_label} " if request_label else ""
     body = f"{prompt}{prompt_suffix}"
     max_length = 1900
@@ -180,7 +193,9 @@ class TelegramReadingClient:
         self.session_path = original_session_path
 
         if use_temp_session:
-            self._temp_session_dir = tempfile.TemporaryDirectory(prefix="telegram_session_")
+            self._temp_session_dir = tempfile.TemporaryDirectory(
+                prefix="telegram_session_"
+            )
             temp_base = Path(self._temp_session_dir.name) / original_session_path.name
             _copy_telethon_session(original_session_path, temp_base)
             self.session_path = temp_base
@@ -207,18 +222,22 @@ class TelegramReadingClient:
                     "2단계 인증 비밀번호 (설정된 경우만)",
                     preferred_channel_name="telegram_client",
                     request_label="🔐 **[Telegram Auth]**",
-                )
+                ),
             )
         else:
             await self.client.start()
 
         me = await self.client.get_me()
         if me:
-            logger.info(f"Signed in successfully as {getattr(me, 'first_name', None)} (ID: {me.id})")
+            logger.info(
+                f"Signed in successfully as {getattr(me, 'first_name', None)} (ID: {me.id})"
+            )
         else:
             logger.error("Failed to sign in. Please check your credentials.")
 
-    async def ensure_authorized(self, interactive: bool = False, via_discord: bool = False) -> None:
+    async def ensure_authorized(
+        self, interactive: bool = False, via_discord: bool = False
+    ) -> None:
         """
         클라이언트가 연결되어 있고 인증되었는지 확인합니다.
         interactive=True인 경우 인증되지 않았을 때 로그인을 시도합니다.
@@ -231,7 +250,9 @@ class TelegramReadingClient:
             return
 
         if interactive:
-            logger.warning("Telegram session is not authorized. Starting interactive login...")
+            logger.warning(
+                "Telegram session is not authorized. Starting interactive login..."
+            )
             await self.interactive_login(via_discord=via_discord)
         else:
             raise RuntimeError(
@@ -325,7 +346,9 @@ class TelegramReadingClient:
 
         @self.client.on(events.NewMessage(chats=entity))
         async def _handler(event):
-            parsed = await self._to_reading_message(event.message, download_media, media_dir)
+            parsed = await self._to_reading_message(
+                event.message, download_media, media_dir
+            )
             if parsed:
                 await on_message(parsed)
 
@@ -344,7 +367,9 @@ class TelegramReadingClient:
         media_dir: str | Path | None,
     ) -> ReadingMessage | None:
         text = (message.message or "").strip()
-        logger.debug(f"DEBUG: Processing raw message {message.id}. Text length: {len(text)}, Media: {bool(message.media)}")
+        logger.debug(
+            f"DEBUG: Processing raw message {message.id}. Text length: {len(text)}, Media: {bool(message.media)}"
+        )
 
         if not text and not message.media:
             logger.debug(f"DEBUG: Message {message.id} skipped (no text/media)")
@@ -382,7 +407,9 @@ class TelegramReadingClient:
             reactions=reactions,
         )
 
-    async def _download_media(self, message: Message, media_dir: str | Path | None) -> str | None:
+    async def _download_media(
+        self, message: Message, media_dir: str | Path | None
+    ) -> str | None:
         directory = Path(media_dir) if media_dir else CURRENT_DIR / "downloads"
         directory.mkdir(parents=True, exist_ok=True)
         file_stem = f"{message.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"

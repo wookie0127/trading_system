@@ -14,7 +14,9 @@ def test_run_cmux_gemini_pane_sends_prompt_and_extracts_markdown(monkeypatch):
         calls.append(args)
         envs.append(kwargs["env"])
         if args[1] == "read-screen":
-            prompt = next(part for call in calls for part in call if "<<CMUX_NEWS_DONE:" in part)
+            prompt = next(
+                part for call in calls for part in call if "<<CMUX_NEWS_DONE:" in part
+            )
             marker = re.search(r"<<CMUX_NEWS_DONE:[a-f0-9]+>>", prompt).group(0)
             return subprocess.CompletedProcess(
                 args,
@@ -37,7 +39,14 @@ def test_run_cmux_gemini_pane_sends_prompt_and_extracts_markdown(monkeypatch):
     )
 
     assert output == "# 오늘 뉴스\n- 요약"
-    assert calls[0] == ["cmux", "clear-history", "--workspace", "workspace:1", "--surface", "surface:2"]
+    assert calls[0] == [
+        "cmux",
+        "clear-history",
+        "--workspace",
+        "workspace:1",
+        "--surface",
+        "surface:2",
+    ]
     assert calls[1][0:4] == ["cmux", "set-buffer", "--name", "news-briefing-prompt"]
     assert calls[2] == [
         "cmux",
@@ -49,7 +58,15 @@ def test_run_cmux_gemini_pane_sends_prompt_and_extracts_markdown(monkeypatch):
         "--surface",
         "surface:2",
     ]
-    assert calls[3] == ["cmux", "send-key", "--workspace", "workspace:1", "--surface", "surface:2", "Enter"]
+    assert calls[3] == [
+        "cmux",
+        "send-key",
+        "--workspace",
+        "workspace:1",
+        "--surface",
+        "surface:2",
+        "Enter",
+    ]
     assert all(env["CMUX_SOCKET_PATH"] == "/tmp/cmux-test.sock" for env in envs)
 
 

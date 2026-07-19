@@ -15,16 +15,22 @@ class LongOnlyBacktestEngine:
         self.transaction_cost = fee_rate + slippage_rate
         self.trading_days_per_year = trading_days_per_year
 
-    def run(self, prices: pl.DataFrame, signals: pl.DataFrame, strategy_name: str) -> pl.DataFrame:
+    def run(
+        self, prices: pl.DataFrame, signals: pl.DataFrame, strategy_name: str
+    ) -> pl.DataFrame:
         if signals.is_empty():
             return pl.DataFrame()
 
         results: list[dict[str, object]] = []
         for symbol in signals.select("symbol").unique().to_series().to_list():
-            price_df = prices.filter(pl.col("symbol") == symbol).select(["date", "close"])
+            price_df = prices.filter(pl.col("symbol") == symbol).select(
+                ["date", "close"]
+            )
             if price_df.is_empty():
                 continue
-            signal_df = signals.filter(pl.col("symbol") == symbol).select(["date", "signal"])
+            signal_df = signals.filter(pl.col("symbol") == symbol).select(
+                ["date", "signal"]
+            )
             merged = (
                 price_df.join(signal_df, on="date", how="left")
                 .with_columns(pl.col("signal").fill_null(0).cast(pl.Int8))
@@ -49,7 +55,11 @@ class LongOnlyBacktestEngine:
         trade_returns: list[float] = []
 
         for close, position in zip(closes, positions, strict=True):
-            asset_return = 0.0 if previous_close in (None, 0) else float(close / previous_close - 1)
+            asset_return = (
+                0.0
+                if previous_close in (None, 0)
+                else float(close / previous_close - 1)
+            )
             cost = abs(position - previous_position) * self.transaction_cost
             strategy_return = position * asset_return - cost
             strategy_returns.append(strategy_return)

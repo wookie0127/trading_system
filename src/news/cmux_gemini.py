@@ -26,8 +26,14 @@ def run_cmux_gemini_pane(
 
     target_args = _target_args(resolved_workspace, resolved_surface)
     _run_cmux([command, "clear-history", *target_args], timeout_seconds=20)
-    _run_cmux([command, "set-buffer", "--name", "news-briefing-prompt", terminal_prompt], timeout_seconds=20)
-    _run_cmux([command, "paste-buffer", "--name", "news-briefing-prompt", *target_args], timeout_seconds=20)
+    _run_cmux(
+        [command, "set-buffer", "--name", "news-briefing-prompt", terminal_prompt],
+        timeout_seconds=20,
+    )
+    _run_cmux(
+        [command, "paste-buffer", "--name", "news-briefing-prompt", *target_args],
+        timeout_seconds=20,
+    )
     _run_cmux([command, "send-key", *target_args, "Enter"], timeout_seconds=20)
 
     deadline = time.monotonic() + timeout_seconds
@@ -65,7 +71,9 @@ def _target_args(workspace: str | None, surface: str | None) -> list[str]:
     return args
 
 
-def _run_cmux(args: list[str], timeout_seconds: int) -> subprocess.CompletedProcess[str]:
+def _run_cmux(
+    args: list[str], timeout_seconds: int
+) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.setdefault("CMUX_SOCKET_PATH", _discover_cmux_socket_path())
     completed = subprocess.run(
@@ -108,5 +116,7 @@ def _extract_markdown_from_screen(screen: str, done_marker: str) -> str:
 
     markdown = "\n".join(lines[start_index:]).strip()
     if not markdown:
-        raise RuntimeError("Gemini pane response marker was found, but markdown output was empty")
+        raise RuntimeError(
+            "Gemini pane response marker was found, but markdown output was empty"
+        )
     return markdown

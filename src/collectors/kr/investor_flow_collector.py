@@ -16,7 +16,10 @@ Schema (§4.2):
   individual_buy, individual_sell,
   volume, trade_value
 """
-import sys as _sys; from pathlib import Path as _Path
+
+import sys as _sys
+from pathlib import Path as _Path
+
 _sys.path.insert(0, str(_Path(__file__).parents[2]))  # src/ 패키지 루트
 del _sys, _Path
 
@@ -75,21 +78,21 @@ def _parse_output(payload: dict, symbol: str, trade_date: date) -> dict | None:
             return 0.0
 
     return {
-        "date":             trade_date,
-        "symbol":           symbol,
+        "date": trade_date,
+        "symbol": symbol,
         # foreign
-        "foreign_buy":      _f("frgn_buy_vol"),
-        "foreign_sell":     _f("frgn_sel_vol"),
-        "foreign_net":      _f("frgn_ntby_qty"),
+        "foreign_buy": _f("frgn_buy_vol"),
+        "foreign_sell": _f("frgn_sel_vol"),
+        "foreign_net": _f("frgn_ntby_qty"),
         # institution
-        "institution_buy":  _f("orgn_buy_vol"),
+        "institution_buy": _f("orgn_buy_vol"),
         "institution_sell": _f("orgn_sel_vol"),
         # individual
-        "individual_buy":   _f("prsn_buy_vol"),
-        "individual_sell":  _f("prsn_sel_vol"),
+        "individual_buy": _f("prsn_buy_vol"),
+        "individual_sell": _f("prsn_sel_vol"),
         # totals
-        "volume":           _f("acml_vol"),
-        "trade_value":      _f("acml_tr_pbmn"),
+        "volume": _f("acml_vol"),
+        "trade_value": _f("acml_tr_pbmn"),
     }
 
 
@@ -102,8 +105,8 @@ async def _fetch_one(
     headers = _build_headers(auth)
     params = {
         "FID_COND_MRKT_DIV_CODE": "J",
-        "FID_INPUT_ISCD":         symbol,
-        "FID_INPUT_DATE_1":       trade_date.strftime("%Y%m%d"),
+        "FID_INPUT_ISCD": symbol,
+        "FID_INPUT_DATE_1": trade_date.strftime("%Y%m%d"),
     }
 
     try:

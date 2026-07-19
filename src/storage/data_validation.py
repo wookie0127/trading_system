@@ -40,7 +40,9 @@ def validate_intraday(df: pd.DataFrame, symbol: str = "") -> pd.DataFrame:
 
     # --- duplicate timestamps ---
     if "timestamp" in df.columns:
-        dup = df.duplicated(subset=["timestamp", "symbol"] if "symbol" in df.columns else ["timestamp"])
+        dup = df.duplicated(
+            subset=["timestamp", "symbol"] if "symbol" in df.columns else ["timestamp"]
+        )
         n_dup = dup.sum()
         if n_dup:
             issues.append(f"{n_dup} duplicate timestamp rows")

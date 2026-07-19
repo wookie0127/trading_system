@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -65,5 +65,7 @@ class MarketSnapshot(BaseModel):
     derivatives: DerivativesInfo = Field(default_factory=DerivativesInfo)
     sentiment: SentimentInfo = Field(default_factory=SentimentInfo)
     position: PositionInfo = Field(default_factory=PositionInfo)
-    previous_decision: PreviousDecisionInfo = Field(default_factory=PreviousDecisionInfo)
+    previous_decision: PreviousDecisionInfo = Field(
+        default_factory=PreviousDecisionInfo
+    )
     data_quality: DataQualityInfo = Field(default_factory=DataQualityInfo)
