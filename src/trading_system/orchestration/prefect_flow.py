@@ -19,6 +19,9 @@ try:
     from src.trading_system.execution.factory import get_execution_adapter
 except ImportError:
     from trading_system.execution.factory import get_execution_adapter
+import asyncio
+from src.bots.notifier import Notifier
+from src.trading_system.evaluation.chart import generate_snapshot_chart
 from src.trading_system.storage.repository import SQLiteRepository
 from src.trading_system.evaluation.outcomes import CounterfactualEvaluator
 
@@ -139,6 +142,75 @@ def execute_order_and_save_audit_task(
     }
 
 
+@task(name="Send Discord Trading Notification", cache_policy=NO_CACHE)
+def send_discord_trading_notification_task(
+    snapshot: Any,
+    decision: Any,
+    raw_response: str,
+    validation_status: str,
+    validation_reason: str,
+    df_4h: pd.DataFrame,
+    current_idx: int,
+    trading_mode: str = "paper",
+    channel_id: str = "1529174702470336532",
+) -> bool:
+    action = getattr(decision, "action", "NO_TRADE") if decision else "NO_TRADE"
+    confidence = getattr(decision, "confidence", 0.0) if decision else 0.0
+    reasoning = getattr(decision, "reasoning", "") if decision else ""
+    evidence = getattr(decision, "evidence", None) if decision else None
+
+    # 1. Generate Technical Chart Image
+    chart_path = generate_snapshot_chart(
+        df_candles=df_4h,
+        current_idx=current_idx,
+        action=action,
+    )
+
+    mode_label = (
+        "📝 [모의투자]"
+        if trading_mode == "paper"
+        else ("🔴 [실전투자]" if trading_mode == "live" else "👻 [시뮬레이션]")
+    )
+    action_icon = "🟢" if "LONG" in action else ("🔴" if "SHORT" in action else "⚪")
+
+    entry_px = snapshot.price.close if hasattr(snapshot, "price") else 0.0
+    time_str = snapshot.timestamp if hasattr(snapshot, "timestamp") else ""
+
+    msg_lines = [
+        f"🤖 **[Gemini System Trading Report]** {mode_label}",
+        f"• **Symbol**: BTCUSDT",
+        f"• **Timestamp**: `{time_str}`",
+        f"• **Decision**: {action_icon} `{action}` (Confidence: {confidence:.0%})",
+        f"• **Current Price**: `${entry_px:,.2f}`",
+        f"• **Validation**: `{validation_status}` ({validation_reason})",
+    ]
+
+    if reasoning:
+        msg_lines.append(f"\n🧠 **Reasoning & Analysis**:\n> {reasoning}")
+
+    if evidence and hasattr(evidence, "key_factors"):
+        factors = getattr(evidence, "key_factors", [])
+        if factors:
+            msg_lines.append("\n📊 **Key Factors**:")
+            for factor in factors:
+                msg_lines.append(f"- {factor}")
+
+    full_text = "\n".join(msg_lines)
+
+    notifier = Notifier()
+    try:
+        return asyncio.run(
+            notifier.send_discord_async(
+                text=full_text,
+                channel_id=channel_id,
+                attachment_paths=[str(chart_path)],
+            )
+        )
+    except Exception as e:
+        logger.error(f"Failed to send Discord trading notification: {e}")
+        return False
+
+
 @flow(name="Gemini 4H Single-Shot Trading Flow")
 def gemini_4h_trading_flow(
     db_path: str = "trading_system.db",
@@ -146,6 +218,7 @@ def gemini_4h_trading_flow(
     model_name: str = "gemini-2.5-flash",
     trading_mode: str = "paper",
     confirm_live: bool = False,
+    discord_channel_id: Optional[str] = "1529174702470336532",
 ) -> Dict[str, Any]:
     logger.info(
         f"Executing Prefect Flow: Gemini 4H Single-Shot Trading Flow (Mode: {trading_mode})"
@@ -202,6 +275,20 @@ def gemini_4h_trading_flow(
         df_4h=df_4h,
         current_idx=current_idx,
     )
+
+    # Task 5: Send Discord Notification (Chart & Reasoning)
+    if discord_channel_id:
+        send_discord_trading_notification_task(
+            snapshot=snapshot,
+            decision=decision,
+            raw_response=raw_response,
+            validation_status=val_status,
+            validation_reason=val_reason,
+            df_4h=df_4h,
+            current_idx=current_idx,
+            trading_mode=trading_mode,
+            channel_id=discord_channel_id,
+        )
 
     logger.info(
         f"Prefect Flow completed: Action={res['action']}, DecisionID={res['decision_id']}"

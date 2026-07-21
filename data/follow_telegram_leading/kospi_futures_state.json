@@ -1,9 +1,10 @@
 {
-  "date": "2026-07-16",
-  "open_quantity": 1,
-  "avg_entry_price": 1081.0,
-  "realized_pnl_points": 0.0,
-  "last_action": "paper_buy",
-  "last_price": 1081,
-  "last_updated": "2026-07-16T15:16:48.648855+09:00"
+  "date": "2026-07-21",
+  "open_quantity": 2,
+  "avg_entry_price": 1078.6666666666667,
+  "realized_pnl_points": 5.3333333333332575,
+  "last_action": "paper_sell",
+  "last_price": 1087,
+  "last_updated": "2026-07-21T13:35:42.503475+09:00",
+  "last_realized_pnl_points": 8.333333333333258
 }
