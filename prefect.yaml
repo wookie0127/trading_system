@@ -74,7 +74,8 @@ deployments:
   concurrency_limit: null
   description: "Gemini 3.5 Flash 기반 BTCUSDT 4시간봉 자율 의사결정 트레이딩 Prefect Flow"
   entrypoint: src/trading_system/orchestration/prefect_flow.py:gemini_4h_trading_flow
-  parameters: {}
+  parameters:
+    trading_mode: "paper"
   work_pool:
     name: default-agent-pool
     work_queue_name: null
