@@ -62,6 +62,8 @@ class MarketSnapshot(BaseModel):
     price: PriceInfo
     higher_timeframe: HigherTimeframeInfo
     technical: TechnicalInfo
+    technical_15m: Optional[TechnicalInfo] = None
+    technical_1m: Optional[TechnicalInfo] = None
     derivatives: DerivativesInfo = Field(default_factory=DerivativesInfo)
     sentiment: SentimentInfo = Field(default_factory=SentimentInfo)
     position: PositionInfo = Field(default_factory=PositionInfo)

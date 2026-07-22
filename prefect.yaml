@@ -68,11 +68,11 @@ deployments:
     work_queue_name: null
     job_variables: {}
   schedules: []
-- name: Gemini-1H-System-Trading
+- name: Gemini-4H-System-Trading
   version: null
   tags: ["gemini", "crypto", "btc"]
   concurrency_limit: null
-  description: "Gemini 3.5 Flash 기반 BTCUSDT 1시간 주기 자율 트레이딩 및 Discord 알림 Prefect Flow"
+  description: "Gemini 3.5 Flash 기반 BTCUSDT 4시간봉 자율 의사결정 트레이딩 Prefect Flow"
   entrypoint: src/trading_system/orchestration/prefect_flow.py:gemini_4h_trading_flow
   parameters:
     trading_mode: "paper"
@@ -82,6 +82,6 @@ deployments:
     work_queue_name: null
     job_variables: {}
   schedules:
-  - cron: 0 * * * *
+  - cron: 0 */4 * * *
     timezone: UTC
     day_or: true

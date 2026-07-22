@@ -86,3 +86,87 @@ class SnapshotBuilder:
             data_quality=DataQualityInfo(is_complete=True),
         )
         return snapshot
+
+    def build_snapshot_from_multi_timeframes(
+        self,
+        df_15m: pd.DataFrame,
+        df_1m: pd.DataFrame,
+        current_position: Optional[PositionInfo] = None,
+        previous_decision: Optional[PreviousDecisionInfo] = None,
+    ) -> MarketSnapshot:
+        """
+        Builds a point-in-time MarketSnapshot from df_15m and df_1m.
+        """
+        df_15m_indicators = compute_technical_indicators(df_15m.copy())
+        df_1m_indicators = compute_technical_indicators(df_1m.copy())
+
+        curr_15m = df_15m_indicators.iloc[-1]
+        prev_15m = df_15m_indicators.iloc[-2] if len(df_15m_indicators) > 1 else curr_15m
+        row_24h = df_15m_indicators.iloc[-96] if len(df_15m_indicators) >= 96 else df_15m_indicators.iloc[0]
+
+        close_price = float(curr_15m["close"])
+        prev_close = float(prev_15m["close"])
+        close_24h = float(row_24h["close"])
+
+        return_15m = (close_price - prev_close) / prev_close if prev_close else 0.0
+        return_24h = (close_price - close_24h) / close_24h if close_24h else 0.0
+        range_15m = (
+            (float(curr_15m["high"]) - float(curr_15m["low"])) / close_price
+            if close_price
+            else 0.0
+        )
+
+        ema_200 = float(curr_15m["ema_200"])
+        price_vs_ema_200 = (close_price - ema_200) / ema_200 if ema_200 else 0.0
+        daily_trend = "UP" if price_vs_ema_200 > 0 else "DOWN"
+
+        run_at_str = str(curr_15m["timestamp"])
+
+        technical_15m = TechnicalInfo(
+            ema_20=float(curr_15m["ema_20"]),
+            ema_50=float(curr_15m["ema_50"]),
+            ema_100=float(curr_15m["ema_100"]),
+            ema_200=ema_200,
+            rsi_14=float(curr_15m["rsi_14"]),
+            macd_histogram=float(curr_15m["macd_histogram"]),
+            atr_ratio=float(curr_15m["atr_ratio"]),
+            bollinger_position=float(curr_15m["bollinger_position"]),
+            volume_zscore=float(curr_15m["volume_zscore"]),
+        )
+
+        curr_1m = df_1m_indicators.iloc[-1]
+        technical_1m = TechnicalInfo(
+            ema_20=float(curr_1m["ema_20"]),
+            ema_50=float(curr_1m["ema_50"]),
+            ema_100=float(curr_1m["ema_100"]),
+            ema_200=float(curr_1m["ema_200"]),
+            rsi_14=float(curr_1m["rsi_14"]),
+            macd_histogram=float(curr_1m["macd_histogram"]),
+            atr_ratio=float(curr_1m["atr_ratio"]),
+            bollinger_position=float(curr_1m["bollinger_position"]),
+            volume_zscore=float(curr_1m["volume_zscore"]),
+        )
+
+        snapshot = MarketSnapshot(
+            run_at=run_at_str,
+            symbol="BTCUSDT",
+            decision_timeframe="15m",
+            price=PriceInfo(
+                close=close_price,
+                return_4h=return_15m,
+                return_24h=return_24h,
+                range_4h=range_15m,
+            ),
+            higher_timeframe=HigherTimeframeInfo(
+                daily_trend=daily_trend, price_vs_ema_200=price_vs_ema_200
+            ),
+            technical=technical_15m,
+            technical_15m=technical_15m,
+            technical_1m=technical_1m,
+            derivatives=DerivativesInfo(),
+            sentiment=SentimentInfo(),
+            position=current_position or PositionInfo(),
+            previous_decision=previous_decision or PreviousDecisionInfo(),
+            data_quality=DataQualityInfo(is_complete=True),
+        )
+        return snapshot

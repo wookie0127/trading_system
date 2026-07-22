@@ -21,7 +21,7 @@ except ImportError:
     from trading_system.execution.factory import get_execution_adapter
 import asyncio
 from src.bots.notifier import Notifier
-from src.trading_system.evaluation.chart import generate_snapshot_chart
+from src.trading_system.evaluation.chart import generate_snapshot_chart, generate_multi_timeframe_chart
 from src.trading_system.storage.repository import SQLiteRepository
 from src.trading_system.evaluation.outcomes import CounterfactualEvaluator
 
@@ -32,6 +32,17 @@ def build_and_validate_snapshot_task(
 ) -> Dict[str, Any]:
     builder = SnapshotBuilder()
     snapshot = builder.build_snapshot_from_df(df_4h, current_idx)
+
+    is_valid = SnapshotValidator.validate(snapshot)
+    return {"snapshot": snapshot, "is_valid": is_valid}
+
+
+@task(name="Build & Validate Multi-Timeframe Snapshot", retries=1)
+def build_and_validate_snapshot_multi_timeframes_task(
+    df_15m: pd.DataFrame, df_1m: pd.DataFrame
+) -> Dict[str, Any]:
+    builder = SnapshotBuilder()
+    snapshot = builder.build_snapshot_from_multi_timeframes(df_15m, df_1m)
 
     is_valid = SnapshotValidator.validate(snapshot)
     return {"snapshot": snapshot, "is_valid": is_valid}
@@ -149,8 +160,8 @@ def send_discord_trading_notification_task(
     raw_response: str,
     validation_status: str,
     validation_reason: str,
-    df_4h: pd.DataFrame,
-    current_idx: int,
+    df_15m: pd.DataFrame,
+    df_1m: pd.DataFrame,
     trading_mode: str = "paper",
     channel_id: str = "1529174702470336532",
 ) -> bool:
@@ -159,10 +170,10 @@ def send_discord_trading_notification_task(
     reasoning = getattr(decision, "reasoning", "") if decision else ""
     evidence = getattr(decision, "evidence", None) if decision else None
 
-    # 1. Generate Technical Chart Image
-    chart_path = generate_snapshot_chart(
-        df_candles=df_4h,
-        current_idx=current_idx,
+    # 1. Generate Multi-Timeframe Chart Image (15m & 1m subplots)
+    chart_path = generate_multi_timeframe_chart(
+        df_15m=df_15m,
+        df_1m=df_1m,
         action=action,
     )
 
@@ -171,27 +182,33 @@ def send_discord_trading_notification_task(
         if trading_mode == "paper"
         else ("🔴 [실전투자]" if trading_mode == "live" else "👻 [시뮬레이션]")
     )
-    action_icon = "🟢" if "LONG" in action else ("🔴" if "SHORT" in action else "⚪")
+    action_icon = (
+        "🟢" if "LONG" in action else ("🔴" if "SHORT" in action else "⚪")
+    )
 
     entry_px = snapshot.price.close if hasattr(snapshot, "price") else 0.0
-    time_str = snapshot.timestamp if hasattr(snapshot, "timestamp") else ""
+    time_str = snapshot.run_at if hasattr(snapshot, "run_at") else ""
 
     msg_lines = [
-        f"🤖 **[Gemini System Trading Report]** {mode_label}",
+        f"🤖 **[Gemini Multi-Timeframe System Report]** {mode_label}",
         f"• **Symbol**: BTCUSDT",
-        f"• **Timestamp**: `{time_str}`",
+        f"• **Timestamp**: `{time_str}` (KST)",
         f"• **Decision**: {action_icon} `{action}` (Confidence: {confidence:.0%})",
         f"• **Current Price**: `${entry_px:,.2f}`",
+        f"• **Timeframe Split**: 15m & 1m Multi-Analysis 📊",
         f"• **Validation**: `{validation_status}` ({validation_reason})",
     ]
 
     if reasoning:
         msg_lines.append(f"\n🧠 **Reasoning & Analysis**:\n> {reasoning}")
 
-    if evidence and hasattr(evidence, "key_factors"):
-        factors = getattr(evidence, "key_factors", [])
-        if factors:
-            msg_lines.append("\n📊 **Key Factors**:")
+    if evidence:
+        msg_lines.append("\n📊 **Supporting Evidences**:")
+        if isinstance(evidence, list):
+            for ev in evidence:
+                msg_lines.append(f"- [{getattr(ev, 'category', 'info')}] {getattr(ev, 'description', '')}")
+        elif hasattr(evidence, "key_factors"):
+            factors = getattr(evidence, "key_factors", [])
             for factor in factors:
                 msg_lines.append(f"- {factor}")
 
@@ -211,6 +228,30 @@ def send_discord_trading_notification_task(
         return False
 
 
+@task(name="Load Latest News Briefing", cache_policy=NO_CACHE)
+def load_latest_news_briefing_task() -> str:
+    """
+    Retrieves the latest news briefing markdown file.
+    """
+    import arrow
+    for offset in range(3):
+        date_str = arrow.now().shift(days=-offset).format("YYYY-MM-DD")
+        paths = [
+            Path(f"data/news_summaries/{date_str}.md"),
+            Path(f"obsidian/뉴스요약/{date_str}.md"),
+            Path(f"obsidian/news_summaries/{date_str}.md"),
+        ]
+        for p in paths:
+            if p.exists():
+                try:
+                    logger.info(f"Loaded news briefing from {p}")
+                    content = p.read_text(encoding="utf-8")
+                    return content
+                except Exception as e:
+                    logger.warning(f"Failed to read news briefing file {p}: {e}")
+    return "No recent news briefing available."
+
+
 @flow(name="Gemini 4H Single-Shot Trading Flow")
 def gemini_4h_trading_flow(
     db_path: str = "trading_system.db",
@@ -225,24 +266,29 @@ def gemini_4h_trading_flow(
     )
 
     collector = MarketDataCollector()
-    df_4h = collector.load_4h_candles()
-    current_idx = len(df_4h) - 1
+    df_15m = collector.fetch_realtime_candles(interval="15m", limit=100)
+    df_1m = collector.fetch_realtime_candles(interval="1m", limit=100)
+    current_idx_15m = len(df_15m) - 1
 
     # Load strategy guidelines
     strat_file = Path(strategy_path)
     guidelines = strat_file.read_text(encoding="utf-8") if strat_file.exists() else ""
 
     # Task 1: Build Snapshot
-    snap_res = build_and_validate_snapshot_task(df_4h, current_idx)
+    snap_res = build_and_validate_snapshot_multi_timeframes_task(df_15m, df_1m)
     snapshot = snap_res["snapshot"]
 
     if not snap_res["is_valid"]:
         logger.warning("Snapshot is invalid/stale. Halting flow.")
         return {"status": "INVALID_SNAPSHOT"}
 
+    # Task 1.5: Load Latest Daily News Briefing
+    news_briefing = load_latest_news_briefing_task()
+    combined_guidelines = f"{guidelines}\n\n## Latest Daily News Briefing\n{news_briefing}"
+
     # Task 2: Gemini Decision
     llm_client = GeminiDecisionClient(model_name=model_name)
-    decision_res = get_gemini_decision_task(llm_client, snapshot, guidelines)
+    decision_res = get_gemini_decision_task(llm_client, snapshot, combined_guidelines)
 
     decision_id = f"dec-{uuid.uuid4().hex[:10]}"
     decision = decision_res["decision"]
@@ -272,8 +318,8 @@ def gemini_4h_trading_flow(
         raw_response=raw_response,
         validation_status=val_status,
         validation_reason=val_reason,
-        df_4h=df_4h,
-        current_idx=current_idx,
+        df_4h=df_15m,
+        current_idx=current_idx_15m,
     )
 
     # Task 5: Send Discord Notification (Chart & Reasoning)
@@ -284,8 +330,8 @@ def gemini_4h_trading_flow(
             raw_response=raw_response,
             validation_status=val_status,
             validation_reason=val_reason,
-            df_4h=df_4h,
-            current_idx=current_idx,
+            df_15m=df_15m,
+            df_1m=df_1m,
             trading_mode=trading_mode,
             channel_id=discord_channel_id,
         )
