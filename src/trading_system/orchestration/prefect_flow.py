@@ -266,8 +266,8 @@ def gemini_4h_trading_flow(
     )
 
     collector = MarketDataCollector()
-    df_15m = collector.fetch_realtime_candles(interval="15m", limit=100)
-    df_1m = collector.fetch_realtime_candles(interval="1m", limit=100)
+    df_15m = collector.fetch_realtime_candles(interval="15m", limit=150)
+    df_1m = collector.fetch_realtime_candles(interval="1m", limit=300)
     current_idx_15m = len(df_15m) - 1
 
     # Load strategy guidelines
